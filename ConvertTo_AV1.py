@@ -10,22 +10,9 @@ import time
 source_dir = r'F:\ForTesting'
 target_base = r'F:\ForTesting_Out'
 tmp_input = 'F:\\tmp_input'
-CHUNK_SIZE = 1 * 1024 * 1024 * 1024  # ~29 GB
+CHUNK_SIZE = 1 * 1024 * 1024 * 1024  # 1 GB per chunk
 
 # Utility functions
-def get_bitrate(file_path):
-    result = subprocess.run([
-        'ffprobe', '-v', 'error',
-        '-select_streams', 'v:0',
-        '-show_entries', 'stream=bit_rate',
-        '-of', 'default=noprint_wrappers=1:nokey=1',
-        file_path
-    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    bitrate = result.stdout.strip()
-    if bitrate == 'N/A' or not bitrate:
-        return None
-    return str(int(int(bitrate) / 1000)) + 'k'
-
 def get_duration(file_path):
     result = subprocess.run([
         'ffprobe', '-v', 'error',
@@ -94,52 +81,36 @@ def copy_to_tmp(chunk):
         shutil.copy2(src, dst)
 
 class CodecConfig:
-    def __init__(self, name, output_dir, target_dir, ffmpeg_cmd_fn_name):
-        self.name = name
-        self.output_dir = output_dir
-        self.target_dir = target_dir
-        self.ffmpeg_cmd_fn_name = ffmpeg_cmd_fn_name
+    def __init__(self, crf_value):
+        self.crf = crf_value
+        self.name = f'AV1_crf{crf_value}'
+        self.output_dir = f'F:\\tmp_output_av1_crf{crf_value}'
+        self.target_dir = os.path.join(target_base, self.name)
 
-# FFmpeg command function definitions
-def ffmpeg_cmd_h265(src, out, br):
-    return ['ffmpeg', '-i', src, '-c:v', 'libx265', '-preset', 'slow', '-threads', '0',
-            '-b:v', br, '-x265-params', 'log-level=error', '-c:a', 'aac', '-b:a', '64k', out]
-
-def ffmpeg_cmd_aom_cpu4(src, out, br):
-    return ['ffmpeg', '-i', src, '-c:v', 'libaom-av1', '-cpu-used', '4', '-threads', '0',
-            '-b:v', br, '-c:a', 'libopus', '-b:a', '64k', out]
-
-def ffmpeg_cmd_aom_cpu8(src, out, br):
-    return ['ffmpeg', '-i', src, '-c:v', 'libaom-av1', '-cpu-used', '8', '-threads', '0',
-            '-b:v', br, '-c:a', 'libopus', '-b:a', '64k', out]
-
-def ffmpeg_cmd_svt(src, out, br):
-    return ['ffmpeg', '-i', src, '-c:v', 'libsvtav1', '-preset', '6', '-threads', '0',
-            '-b:v', br, '-c:a', 'libopus', '-b:a', '64k', out]
-
-def ffmpeg_cmd_aom_default(src, out, br):
-    return ['ffmpeg', '-i', src, '-c:v', 'libaom-av1', '-threads', '0',
-            '-b:v', br, '-c:a', 'libopus', '-b:a', '64k', out]
-
-cmd_fn_map = {
-    'ffmpeg_cmd_h265': ffmpeg_cmd_h265,
-    'ffmpeg_cmd_aom_cpu4': ffmpeg_cmd_aom_cpu4,
-    'ffmpeg_cmd_aom_cpu8': ffmpeg_cmd_aom_cpu8,
-    'ffmpeg_cmd_svt': ffmpeg_cmd_svt,
-    'ffmpeg_cmd_aom_default': ffmpeg_cmd_aom_default,
-}
+def ffmpeg_cmd_av1_crf(src, out, crf):
+    return [
+        'ffmpeg', '-i', src, # '-t', '60',
+        '-c:v', 'libaom-av1',
+        '-crf', str(crf),
+        '-b:v', '0',
+        '-cpu-used', '2',
+        '-row-mt', '1',
+        '-threads', '0',
+        '-c:a', 'libopus',
+        '-b:a', '96k',
+        out
+    ]
 
 def encode_worker(config: CodecConfig):
     os.makedirs(config.output_dir, exist_ok=True)
     os.makedirs(config.target_dir, exist_ok=True)
-    cmd_fn = cmd_fn_map[config.ffmpeg_cmd_fn_name]
 
     files_to_process = []
     for root, _, files in os.walk(tmp_input):
         for file in files:
-            full_path = os.path.join(root, file)
-            rel_path = os.path.relpath(full_path, tmp_input)
             if file.lower().endswith('.mp4'):
+                full_path = os.path.join(root, file)
+                rel_path = os.path.relpath(full_path, tmp_input)
                 files_to_process.append((full_path, rel_path))
 
     total_bytes = sum(os.path.getsize(f) for f, _ in files_to_process)
@@ -148,20 +119,16 @@ def encode_worker(config: CodecConfig):
 
     for src_file, rel_path in files_to_process:
         out_file = os.path.join(config.output_dir, rel_path)
-        os.makedirs(os.path.dirname(out_file), exist_ok=True)
         final_dst = os.path.join(config.target_dir, rel_path)
+
+        os.makedirs(os.path.dirname(out_file), exist_ok=True)
         if os.path.exists(final_dst):
             continue
 
-        bitrate = get_bitrate(src_file)
-        if not bitrate:
-            tqdm.write(f"❌ [{config.name}] Skipping {src_file} (no bitrate)")
-            continue
-
-        cmd = cmd_fn(src_file, out_file, bitrate)
+        cmd = ffmpeg_cmd_av1_crf(src_file, out_file, config.crf)
         duration = get_duration(src_file)
-        start_time = time.time()
 
+        start_time = time.time()
         if duration:
             ffmpeg_with_progress(cmd, duration, f"{config.name}: {os.path.basename(src_file)}")
         else:
@@ -182,13 +149,8 @@ def main():
     all_files = get_all_files(source_dir)
     chunks = prepare_chunks(all_files)
 
-    codec_configs = [
-        # CodecConfig('H265', 'F:\\tmp_output_h265', os.path.join(target_base, 'H265'), 'ffmpeg_cmd_h265'),
-        # CodecConfig('AV1-cpu4', 'F:\\tmp_output_av1_cpu4', os.path.join(target_base, 'AV1_cpu4'), 'ffmpeg_cmd_aom_cpu4'),
-        # CodecConfig('AV1-cpu8', 'F:\\tmp_output_av1_cpu8', os.path.join(target_base, 'AV1_cpu8'), 'ffmpeg_cmd_aom_cpu8'),
-        # CodecConfig('SVT-AV1', 'F:\\tmp_output_av1_svt', os.path.join(target_base, 'AV1_svt'), 'ffmpeg_cmd_svt'),
-        CodecConfig('AV1', 'F:\\tmp_output_av1', os.path.join(target_base, 'AV1'), 'ffmpeg_cmd_aom_default'),
-    ]
+    crf_values = [24, 60]
+    codec_configs = [CodecConfig(crf) for crf in crf_values]
 
     print(f"🔁 Found {len(chunks)} chunks to process.")
     for i, chunk in enumerate(chunks, 1):
