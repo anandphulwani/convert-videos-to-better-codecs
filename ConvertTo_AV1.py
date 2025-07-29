@@ -1,7 +1,9 @@
 import os
 import shutil
 import subprocess
-from multiprocessing import Process
+import threading
+from multiprocessing import Manager
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 import re
 import time
@@ -9,10 +11,12 @@ import time
 # Config
 source_dir = r'F:\ForTesting'
 target_base = r'F:\ForTesting_Out'
-tmp_input = 'F:\\tmp_input'
+tmp_input = r'F:\tmp_input'
 CHUNK_SIZE = 1 * 1024 * 1024 * 1024  # 1 GB per chunk
+CRF_VALUES = [24, 60]
+MAX_WORKERS = 8
 
-# Utility functions
+# Utilities
 def get_duration(file_path):
     result = subprocess.run([
         'ffprobe', '-v', 'error',
@@ -48,9 +52,10 @@ def get_all_files(base_dir):
     all_files = []
     for root, _, files in os.walk(base_dir):
         for file in files:
-            full_path = os.path.join(root, file)
-            rel_path = os.path.relpath(full_path, base_dir)
-            all_files.append((full_path, rel_path))
+            if file.lower().endswith('.mp4'):
+                full_path = os.path.join(root, file)
+                rel_path = os.path.relpath(full_path, base_dir)
+                all_files.append((full_path, rel_path))
     return sorted(all_files, key=lambda x: x[1])
 
 def prepare_chunks(files):
@@ -58,21 +63,22 @@ def prepare_chunks(files):
     chunk = []
     size = 0
     for full_path, rel_path in files:
-        if full_path.lower().endswith('.mp4'):
-            file_size = os.path.getsize(full_path)
-            if size + file_size > CHUNK_SIZE and chunk:
-                chunks.append(chunk)
-                chunk = []
-                size = 0
-            size += file_size
+        file_size = os.path.getsize(full_path)
+        if size + file_size > CHUNK_SIZE and chunk:
+            chunks.append(chunk)
+            chunk = []
+            size = 0
+        size += file_size
         chunk.append((full_path, rel_path))
     if chunk:
         chunks.append(chunk)
     return chunks
 
-def clear_tmp():
+def clear_tmp_all():
     shutil.rmtree(tmp_input, ignore_errors=True)
     os.makedirs(tmp_input, exist_ok=True)
+    for crf in CRF_VALUES:
+        shutil.rmtree(f'F:\\tmp_output_av1_crf{crf}', ignore_errors=True)
 
 def copy_to_tmp(chunk):
     for src, rel in tqdm(chunk, desc="📄 Copying to temp", unit="file"):
@@ -80,16 +86,9 @@ def copy_to_tmp(chunk):
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy2(src, dst)
 
-class CodecConfig:
-    def __init__(self, crf_value):
-        self.crf = crf_value
-        self.name = f'AV1_crf{crf_value}'
-        self.output_dir = f'F:\\tmp_output_av1_crf{crf_value}'
-        self.target_dir = os.path.join(target_base, self.name)
-
 def ffmpeg_cmd_av1_crf(src, out, crf):
     return [
-        'ffmpeg', '-i', src, # '-t', '60',
+        'ffmpeg', '-i', src,
         '-c:v', 'libaom-av1',
         '-crf', str(crf),
         '-b:v', '0',
@@ -101,73 +100,97 @@ def ffmpeg_cmd_av1_crf(src, out, crf):
         out
     ]
 
-def encode_worker(config: CodecConfig):
-    os.makedirs(config.output_dir, exist_ok=True)
-    os.makedirs(config.target_dir, exist_ok=True)
+def encode_file(src_file, rel_path, crf, bytes_encoded):
+    output_dir = f'F:\\tmp_output_av1_crf{crf}'
+    target_dir = os.path.join(target_base, f'AV1_crf{crf}')
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(target_dir, exist_ok=True)
 
-    files_to_process = []
-    for root, _, files in os.walk(tmp_input):
-        for file in files:
-            if file.lower().endswith('.mp4'):
-                full_path = os.path.join(root, file)
-                rel_path = os.path.relpath(full_path, tmp_input)
-                files_to_process.append((full_path, rel_path))
+    out_file = os.path.join(output_dir, rel_path)
+    final_dst = os.path.join(target_dir, rel_path)
 
-    total_bytes = sum(os.path.getsize(f) for f, _ in files_to_process)
-    size_pbar = tqdm(total=total_bytes, unit='B', unit_scale=True,
-                     desc=f"📦 {config.name} Total", position=0)
+    if os.path.exists(final_dst):
+        return f"✅ [CRF {crf}] Skipped {rel_path} (already exists)"
 
-    for src_file, rel_path in files_to_process:
-        out_file = os.path.join(config.output_dir, rel_path)
-        final_dst = os.path.join(config.target_dir, rel_path)
+    os.makedirs(os.path.dirname(out_file), exist_ok=True)
+    cmd = ffmpeg_cmd_av1_crf(src_file, out_file, crf)
+    duration = get_duration(src_file)
+    file_size = os.path.getsize(src_file)
+    start_time = time.time()
 
-        os.makedirs(os.path.dirname(out_file), exist_ok=True)
-        if os.path.exists(final_dst):
-            continue
+    pbar = tqdm(total=duration or 100, desc=f"⏳ CRF{crf}: {os.path.basename(src_file)}", unit='s', leave=False)
+    process = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
+    time_pattern = re.compile(r'time=(\d+):(\d+):(\d+).(\d+)')
 
-        cmd = ffmpeg_cmd_av1_crf(src_file, out_file, config.crf)
-        duration = get_duration(src_file)
+    last_progress = 0
+    for line in process.stderr:
+        match = time_pattern.search(line)
+        if match:
+            h, m, s, ms = map(int, match.groups())
+            seconds = h * 3600 + m * 60 + s
+            pbar.n = seconds
+            pbar.refresh()
 
-        start_time = time.time()
-        if duration:
-            ffmpeg_with_progress(cmd, duration, f"{config.name}: {os.path.basename(src_file)}")
-        else:
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Estimate percent and update bytes
+            if duration:
+                percent = seconds / duration
+                current_progress = int(file_size * percent)
+                delta = current_progress - last_progress
+                last_progress = current_progress
+                bytes_encoded.value += max(0, delta)
 
-        elapsed = time.time() - start_time
-        file_size = os.path.getsize(src_file)
-        size_pbar.update(file_size)
+    process.wait()
+    pbar.n = duration or pbar.n
+    pbar.close()
 
-        tqdm.write(f"✅ [{config.name}] {os.path.basename(src_file)} in {format_elapsed(elapsed)}")
+    shutil.move(out_file, final_dst)
+    elapsed = time.time() - start_time
+    return f"✅ [CRF {crf}] {os.path.basename(src_file)} in {format_elapsed(elapsed)}"
 
-        os.makedirs(os.path.dirname(final_dst), exist_ok=True)
-        shutil.move(out_file, final_dst)
-
-    size_pbar.close()
+def update_size_pbar(pbar, shared_val, total_bytes):
+    while not pbar.disable and pbar.n < total_bytes:
+        pbar.n = shared_val.value
+        pbar.refresh()
+        time.sleep(0.5)
 
 def main():
     all_files = get_all_files(source_dir)
     chunks = prepare_chunks(all_files)
 
-    crf_values = [24, 60]
-    codec_configs = [CodecConfig(crf) for crf in crf_values]
-
     print(f"🔁 Found {len(chunks)} chunks to process.")
     for i, chunk in enumerate(chunks, 1):
         print(f"\n▶️ Processing chunk {i}/{len(chunks)}")
-        clear_tmp()
+        clear_tmp_all()
         copy_to_tmp(chunk)
 
-        processes = []
-        for config in codec_configs:
-            p = Process(target=encode_worker, args=(config,))
-            p.start()
-            processes.append(p)
+        task_queue = []
+        total_bytes = 0
+        for src, rel in chunk:
+            size = os.path.getsize(src)
+            for crf in CRF_VALUES:
+                task_queue.append((src, rel, crf, size))
+                total_bytes += size
 
-        for p in processes:
-            p.join()
+        manager = Manager()
+        shared_bytes = manager.Value('i', 0)
 
-        clear_tmp()
+        size_pbar = tqdm(total=total_bytes, unit='B', unit_scale=True, desc=f"📦 Total Progress", position=0)
+        pbar_thread = threading.Thread(target=update_size_pbar, args=(size_pbar, shared_bytes, total_bytes))
+        pbar_thread.start()
+
+        with ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = [executor.submit(encode_file, src, rel, crf, shared_bytes)
+                       for src, rel, crf, _ in task_queue]
+            for future in as_completed(futures):
+                result = future.result()
+                tqdm.write(result)
+
+        size_pbar.n = total_bytes
+        size_pbar.refresh()
+        size_pbar.close()
+        pbar_thread.join()
+
+        clear_tmp_all()
         print(f"✅ Finished chunk {i}/{len(chunks)}")
 
     print("\n🎉 All video processing complete.")
