@@ -343,8 +343,7 @@ def encode_file(src_file, rel_path, crf, bytes_encoded):
 
 def update_size_pbar(pbar, shared_val, total_bytes):
     while not pbar.disable and pbar.n < total_bytes:
-        with shared_val.get_lock():
-            pbar.n = shared_val.value
+        pbar.n = shared_val.value
         pbar.refresh()
         time.sleep(0.5)
 
