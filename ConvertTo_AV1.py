@@ -92,8 +92,9 @@ class ErrorWarningFilter(logging.Filter):
     def filter(self, record):
         return record.levelno >= logging.WARNING
 
-LOG_FILE = '/root/av1_job_processor.log'
-ERROR_LOG_FILE = '/root/av1_job_processor_errors.log'
+timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+LOG_FILE = f'./av1_job_{timestamp}.log'
+ERROR_LOG_FILE = f'./errors_av1_job_{timestamp}.log'
 
 # General log file handler
 file_handler = logging.FileHandler(LOG_FILE)
