@@ -392,106 +392,108 @@ def main():
     logging.info(f"Starting AV1 job processor on {MACHINE_ID}")
     ensure_dirs()
 
-    processing_files_exist = has_files(TMP_PROCESSING)
+    while True:
+        processing_files_exist = has_files(TMP_PROCESSING)
 
-    if not processing_files_exist:
-        try_acquire_lock_loop()
-        stop_renew = threading.Event()
-        renew_thread = threading.Thread(target=renew_lock, args=(stop_renew,), daemon=True)
-        renew_thread.start()
+        if not processing_files_exist:
+            try_acquire_lock_loop()
+            stop_renew = threading.Event()
+            renew_thread = threading.Thread(target=renew_lock, args=(stop_renew,), daemon=True)
+            renew_thread.start()
 
-        pause_flag.set()
-        if args.throttle:
-            logging.info("CPU throttling enabled.")
-            threading.Thread(target=cpu_watchdog, daemon=True).start()
-        else:
-            logging.info("CPU throttling disabled. Encoding at full capacity.")
             pause_flag.set()
+            if args.throttle:
+                logging.info("CPU throttling enabled.")
+                threading.Thread(target=cpu_watchdog, daemon=True).start()
+            else:
+                logging.info("CPU throttling disabled. Encoding at full capacity.")
+                pause_flag.set()
 
-        chunk = claim_files()
-        if not chunk:
-            logging.info(f"No files claimed by {MACHINE_ID}")
+            chunk = claim_files()
+            if not chunk:
+                logging.info(f"No files claimed by {MACHINE_ID}")
+                stop_renew.set()
+                os.remove(os.path.join(LOCKS_DIR, f"{MACHINE_ID}.lock"))
+                break
+
             stop_renew.set()
+            renew_thread.join()
             os.remove(os.path.join(LOCKS_DIR, f"{MACHINE_ID}.lock"))
-            return
 
-        stop_renew.set()
-        renew_thread.join()
-        os.remove(os.path.join(LOCKS_DIR, f"{MACHINE_ID}.lock"))
+            for src, rel in chunk:
+                dst = os.path.join(TMP_PROCESSING, rel)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                copy_with_progress(os.path.join(IN_PROGRESS, rel), dst, desc=f"Copying {os.path.basename(rel)}")
+                logging.debug(f"Copied to processing dir: {rel}")
+        else:
+            logging.info("Resuming from existing TMP_PROCESSING files...")
+            chunk = []  # no new files claimed; this avoids moving from IN_PROGRESS later
 
-        for src, rel in chunk:
-            dst = os.path.join(TMP_PROCESSING, rel)
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
-            copy_with_progress(os.path.join(IN_PROGRESS, rel), dst, desc=f"Copying {os.path.basename(rel)}")
-            logging.debug(f"Copied to processing dir: {rel}")
-    else:
-        logging.info("Resuming from existing TMP_PROCESSING files...")
-        chunk = []  # no new files claimed; this avoids moving from IN_PROGRESS later
+        task_queue = []
+        total_bytes = 0
+        for src, rel in get_all_files_sorted(TMP_PROCESSING):
+            size = os.path.getsize(src)
+            for crf in CRF_VALUES:
+                task_queue.append((src, rel, crf, size))
+                total_bytes += size
 
-    task_queue = []
-    total_bytes = 0
-    for src, rel in get_all_files_sorted(TMP_PROCESSING):
-        size = os.path.getsize(src)
-        for crf in CRF_VALUES:
-            task_queue.append((src, rel, crf, size))
-            total_bytes += size
+        manager = Manager()
+        shared_bytes = manager.Value('i', 0)
 
-    manager = Manager()
-    shared_bytes = manager.Value('i', 0)
+        size_pbar = tqdm(total=total_bytes, unit='B', unit_scale=True, desc=f"Total Progress", position=0)
+        pbar_thread = threading.Thread(target=update_size_pbar, args=(size_pbar, shared_bytes, total_bytes))
+        pbar_thread.start()
 
-    size_pbar = tqdm(total=total_bytes, unit='B', unit_scale=True, desc=f"Total Progress", position=0)
-    pbar_thread = threading.Thread(target=update_size_pbar, args=(size_pbar, shared_bytes, total_bytes))
-    pbar_thread.start()
+        results = []
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = [executor.submit(encode_file, src, rel, crf, shared_bytes)
+                    for src, rel, crf, _ in task_queue]
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    tqdm.write(result)
+                    logging.info(result)
+                    results.append(result)
+                except Exception as e:
+                    logging.error(f"Encoding task failed: {e}")
+                    with open("failed_encodes.log", "a") as f:
+                        f.write(f"{e}\n")
+                    results.append(f"Failed: {e}")
 
-    results = []
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [executor.submit(encode_file, src, rel, crf, shared_bytes)
-                   for src, rel, crf, _ in task_queue]
-        for future in as_completed(futures):
+        size_pbar.n = total_bytes
+        size_pbar.refresh()
+        size_pbar.close()
+        pbar_thread.join()
+
+        # Determine which files succeeded entirely
+        success_map = {}
+        for result in results:
+            match = re.search(r"\[CRF (\d+)] (.+?)(?: in| Failed)", result)
+            if match:
+                crf = int(match.group(1))
+                file = match.group(2)
+                rel_path = next((rel for _, rel, _, _ in task_queue if os.path.basename(rel) == file), None)
+                if rel_path:
+                    success = "Failed" not in result
+                    if rel_path not in success_map:
+                        success_map[rel_path] = []
+                    success_map[rel_path].append(success)
+
+        for rel in success_map:
+            all_success = all(success_map[rel])
+            target_dir = DONE_DIR if all_success else FAILED_DIR
+            src_path = os.path.join(IN_PROGRESS, rel)
+            dst_path = os.path.join(target_dir, rel)
+            os.makedirs(os.path.dirname(dst_path), exist_ok=True)
             try:
-                result = future.result()
-                tqdm.write(result)
-                logging.info(result)
-                results.append(result)
+                move_with_progress(src_path, dst_path, desc=f"Moving {os.path.basename(rel)}")
+                logging.debug(f"Moved to {'done' if all_success else 'failed'}: {rel}")
             except Exception as e:
-                logging.error(f"Encoding task failed: {e}")
-                with open("failed_encodes.log", "a") as f:
-                    f.write(f"{e}\n")
-                results.append(f"Failed: {e}")
+                logging.error(f"Failed to move file {rel} to final dir: {e}")
 
-    size_pbar.n = total_bytes
-    size_pbar.refresh()
-    size_pbar.close()
-    pbar_thread.join()
-
-    # Determine which files succeeded entirely
-    success_map = {}
-    for result in results:
-        match = re.search(r"\[CRF (\d+)] (.+?)(?: in| Failed)", result)
-        if match:
-            crf = int(match.group(1))
-            file = match.group(2)
-            rel_path = next((rel for _, rel, _, _ in task_queue if os.path.basename(rel) == file), None)
-            if rel_path:
-                success = "Failed" not in result
-                if rel_path not in success_map:
-                    success_map[rel_path] = []
-                success_map[rel_path].append(success)
-
-    for rel in success_map:
-        all_success = all(success_map[rel])
-        target_dir = DONE_DIR if all_success else FAILED_DIR
-        src_path = os.path.join(IN_PROGRESS, rel)
-        dst_path = os.path.join(target_dir, rel)
-        os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-        try:
-            move_with_progress(src_path, dst_path, desc=f"Moving {os.path.basename(rel)}")
-            logging.debug(f"Moved to {'done' if all_success else 'failed'}: {rel}")
-        except Exception as e:
-            logging.error(f"Failed to move file {rel} to final dir: {e}")
-
-    save_logs_to_central_output()
-    logging.info(f"{MACHINE_ID} finished processing.")
+        save_logs_to_central_output()
+        logging.info(f"{MACHINE_ID} finished processing batch; looping back to check for more jobs.")
+        time.sleep(300)
 
 if __name__ == "__main__":
     main()
