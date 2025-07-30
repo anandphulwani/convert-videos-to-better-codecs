@@ -156,6 +156,7 @@ LOCKS_DIR = os.path.join(SFTP_ROOT, 'locks')
 TO_ASSIGN = os.path.join(JOBS_DIR, 'to_assign')
 IN_PROGRESS = os.path.join(JOBS_DIR, 'in_progress', MACHINE_ID)
 DONE_DIR = os.path.join(JOBS_DIR, 'done')
+FAILED_DIR = os.path.join(JOBS_DIR, 'failed')
 
 TMP_ROOT = './tmp_input'
 TMP_PROCESSING = os.path.join(TMP_ROOT, 'processing')
@@ -190,7 +191,7 @@ def move_with_progress(src, dst, desc="Moving"):
     os.remove(src)
 
 def ensure_dirs():
-    dirs = [LOCKS_DIR, TO_ASSIGN, IN_PROGRESS, DONE_DIR, TMP_PROCESSING]
+    dirs = [LOCKS_DIR, TO_ASSIGN, IN_PROGRESS, DONE_DIR, FAILED_DIR, TMP_PROCESSING]
     for d in dirs:
         os.makedirs(d, exist_ok=True)
         logging.debug(f"Ensured directory exists: {d}")
@@ -433,6 +434,7 @@ def main():
     pbar_thread = threading.Thread(target=update_size_pbar, args=(size_pbar, shared_bytes, total_bytes))
     pbar_thread.start()
 
+    results = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = [executor.submit(encode_file, src, rel, crf, shared_bytes)
                    for src, rel, crf, _ in task_queue]
@@ -441,21 +443,43 @@ def main():
                 result = future.result()
                 tqdm.write(result)
                 logging.info(result)
+                results.append(result)
             except Exception as e:
                 logging.error(f"Encoding task failed: {e}")
                 with open("failed_encodes.log", "a") as f:
                     f.write(f"{e}\n")
+                results.append(f"Failed: {e}")
 
     size_pbar.n = total_bytes
     size_pbar.refresh()
     size_pbar.close()
     pbar_thread.join()
 
-    for _, rel in chunk:
-        done_dst = os.path.join(DONE_DIR, rel)
-        os.makedirs(os.path.dirname(done_dst), exist_ok=True)
-        move_with_progress(os.path.join(IN_PROGRESS, rel), done_dst, desc=f"Moving {os.path.basename(rel)}")
-        logging.debug(f"Moved to done: {rel}")
+    # Determine which files succeeded entirely
+    success_map = {}
+    for result in results:
+        match = re.search(r"\[CRF (\d+)] (.+?)(?: in| Failed)", result)
+        if match:
+            crf = int(match.group(1))
+            file = match.group(2)
+            rel_path = next((rel for _, rel, _, _ in task_queue if os.path.basename(rel) == file), None)
+            if rel_path:
+                success = "Failed" not in result
+                if rel_path not in success_map:
+                    success_map[rel_path] = []
+                success_map[rel_path].append(success)
+
+    for rel in success_map:
+        all_success = all(success_map[rel])
+        target_dir = DONE_DIR if all_success else FAILED_DIR
+        src_path = os.path.join(IN_PROGRESS, rel)
+        dst_path = os.path.join(target_dir, rel)
+        os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+        try:
+            move_with_progress(src_path, dst_path, desc=f"Moving {os.path.basename(rel)}")
+            logging.debug(f"Moved to {'done' if all_success else 'failed'}: {rel}")
+        except Exception as e:
+            logging.error(f"Failed to move file {rel} to final dir: {e}")
 
     logging.info(f"{MACHINE_ID} finished processing.")
 
