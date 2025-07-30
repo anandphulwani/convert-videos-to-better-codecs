@@ -157,6 +157,7 @@ TO_ASSIGN = os.path.join(JOBS_DIR, 'to_assign')
 IN_PROGRESS = os.path.join(JOBS_DIR, 'in_progress', MACHINE_ID)
 DONE_DIR = os.path.join(JOBS_DIR, 'done')
 FAILED_DIR = os.path.join(JOBS_DIR, 'failed')
+LOGS_DIR = os.path.join(JOBS_DIR, 'logs', MACHINE_ID)
 
 TMP_ROOT = './tmp_input'
 TMP_PROCESSING = os.path.join(TMP_ROOT, 'processing')
@@ -191,7 +192,7 @@ def move_with_progress(src, dst, desc="Moving"):
     os.remove(src)
 
 def ensure_dirs():
-    dirs = [LOCKS_DIR, TO_ASSIGN, IN_PROGRESS, DONE_DIR, FAILED_DIR, TMP_PROCESSING]
+    dirs = [LOCKS_DIR, TO_ASSIGN, IN_PROGRESS, DONE_DIR, FAILED_DIR, LOGS_DIR, TMP_PROCESSING]
     for d in dirs:
         os.makedirs(d, exist_ok=True)
         logging.debug(f"Ensured directory exists: {d}")
@@ -205,6 +206,14 @@ def ensure_dirs():
         os.makedirs(tmp_out, exist_ok=True)
         os.makedirs(final_out, exist_ok=True)
         logging.debug(f"Ensured CRF directories: {tmp_out}, {final_out}")
+
+def save_logs_to_central_output():
+    try:
+        shutil.copy(LOG_FILE, LOGS_DIR)
+        shutil.copy(ERROR_LOG_FILE, LOGS_DIR)
+        logging.info(f"Copied logs to {LOGS_DIR}")
+    except Exception as e:
+        logging.error(f"Failed to copy logs to {LOGS_DIR}: {e}")
 
 def get_all_files_sorted(base_dir):
     logging.debug(f"Scanning directory: {base_dir}")
@@ -481,6 +490,7 @@ def main():
         except Exception as e:
             logging.error(f"Failed to move file {rel} to final dir: {e}")
 
+    save_logs_to_central_output()
     logging.info(f"{MACHINE_ID} finished processing.")
 
 if __name__ == "__main__":
