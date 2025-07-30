@@ -164,7 +164,7 @@ FINAL_OUTPUT_ROOT = './ForTesting_Out/AV1_crf{}'  # Format string for CRF values
 
 CRF_VALUES = [24, 60]
 MAX_CPU_UTIL = 0.8
-MAX_WORKERS = max(1, int(psutil.cpu_count(logical=True) * MAX_CPU_UTIL))
+MAX_WORKERS = 10 if not args.throttle else max(1, int(psutil.cpu_count(logical=True) * MAX_CPU_UTIL))
 CHUNK_SIZE = 1 * 1024 * 1024 * 1024
 
 pause_flag = threading.Event()
