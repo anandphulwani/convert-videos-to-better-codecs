@@ -88,15 +88,32 @@ parser.add_argument("--throttle", action="store_true", help="Enable CPU usage th
 args = parser.parse_args()
 
 # Setup logging
+class ErrorWarningFilter(logging.Filter):
+    def filter(self, record):
+        return record.levelno >= logging.WARNING
+
 LOG_FILE = '/root/av1_job_processor.log'
-logging.basicConfig(
-    level=logging.DEBUG if args.debug else logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILE),
-        logging.StreamHandler()
-    ]
-)
+ERROR_LOG_FILE = '/root/av1_job_processor_errors.log'
+
+# General log file handler
+file_handler = logging.FileHandler(LOG_FILE)
+file_handler.setLevel(logging.DEBUG if args.debug else logging.INFO)
+file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+
+# Error/Warning file handler
+error_handler = logging.FileHandler(ERROR_LOG_FILE)
+error_handler.setLevel(logging.WARNING)
+error_handler.addFilter(ErrorWarningFilter())
+error_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+
+# Console output handler
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.DEBUG if args.debug else logging.INFO)
+console_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+
+# Add handlers to root logger
+logging.getLogger().setLevel(logging.DEBUG if args.debug else logging.INFO)
+logging.getLogger().handlers = [file_handler, error_handler, console_handler]
 
 def generate_machine_id():
     # Get IP address
