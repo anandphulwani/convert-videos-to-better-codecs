@@ -200,14 +200,14 @@ def try_acquire_lock_loop():
             mod_time = datetime.datetime.fromtimestamp(os.path.getmtime(lock_path))
             age = datetime.datetime.now() - mod_time
             if age.total_seconds() > 900:
-                logging.warning(f"⚠️ Found stale lock for {MACHINE_ID}, removing...")
+                logging.warning(f"Found stale lock for {MACHINE_ID}, removing...")
                 os.remove(lock_path)
         try:
             with open(lock_path, 'x'):
-                logging.info(f"🔓 Lock acquired by {MACHINE_ID}")
+                logging.info(f"Lock acquired by {MACHINE_ID}")
                 return
         except FileExistsError:
-            logging.info(f"⏳ {MACHINE_ID} waiting for lock... retrying in 5 min")
+            logging.info(f"{MACHINE_ID} waiting for lock... retrying in 5 min")
             time.sleep(300)
 
 def renew_lock(stop_event):
@@ -216,21 +216,21 @@ def renew_lock(stop_event):
         try:
             with open(lock_path, 'w') as f:
                 f.write(f"Updated at {datetime.datetime.now()}")
-            logging.debug("🔄 Lock file renewed")
+            logging.debug("Lock file renewed")
         except Exception as e:
-            logging.error(f"❌ Failed to renew lock file: {e}")
+            logging.error(f"Failed to renew lock file: {e}")
         stop_event.wait(600)
 
 def cpu_watchdog():
     while True:
         usage = psutil.cpu_percent(interval=5)
-        logging.debug(f"🧠 CPU usage: {usage}%")
+        logging.debug(f"CPU usage: {usage}%")
         if usage >= 95:
-            logging.warning("⚠️ High CPU usage detected. Pausing encoding...")
+            logging.warning("High CPU usage detected. Pausing encoding...")
             pause_flag.clear()
         elif usage <= 10:
             if not pause_flag.is_set():
-                logging.info("✅ CPU usage normalized. Resuming encoding...")
+                logging.info("CPU usage normalized. Resuming encoding...")
             pause_flag.set()
 
 def claim_files():
@@ -291,19 +291,19 @@ def encode_file(src_file, rel_path, crf, bytes_encoded):
     final_dst = os.path.join(target_dir, rel_path)
 
     if os.path.exists(final_dst):
-        return f"✅ [CRF {crf}] Skipped {rel_path} (already exists)"
+        return f"[CRF {crf}] Skipped {rel_path} (already exists)"
 
     os.makedirs(os.path.dirname(out_file), exist_ok=True)
     cmd = ffmpeg_cmd_av1_crf(src_file, out_file, crf)
     duration = get_duration(src_file)
     if duration is None:
-        logging.warning(f"⚠️ Duration not found for {rel_path}, skipping file.")
-        return f"⚠️ [CRF {crf}] Skipped {rel_path} (duration not found)"
+        logging.warning(f"Duration not found for {rel_path}, skipping file.")
+        return f"[CRF {crf}] Skipped {rel_path} (duration not found)"
     file_size = os.path.getsize(src_file)
     start_time = time.time()
 
     logging.debug(f"Encoding {rel_path} [CRF {crf}]")
-    pbar = tqdm(total=duration or 100, desc=f"⏳ CRF{crf}: {os.path.basename(src_file)}", unit='s', leave=False)
+    pbar = tqdm(total=duration or 100, desc=f"CRF{crf}: {os.path.basename(src_file)}", unit='s', leave=False)
     process = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
     time_pattern = re.compile(r'time=(\d+):(\d+):(\d+).(\d+)')
 
@@ -334,12 +334,12 @@ def encode_file(src_file, rel_path, crf, bytes_encoded):
     pbar.close()
 
     if process.returncode != 0 or not os.path.exists(out_file):
-        logging.error(f"❌ FFmpeg failed for {rel_path} [CRF {crf}]")
-        return f"❌ [CRF {crf}] Failed {rel_path}"
+        logging.error(f"FFmpeg failed for {rel_path} [CRF {crf}]")
+        return f"[CRF {crf}] Failed {rel_path}"
 
     shutil.move(out_file, final_dst)
     elapsed = time.time() - start_time
-    return f"✅ [CRF {crf}] {os.path.basename(src_file)} in {format_elapsed(elapsed)}"
+    return f"[CRF {crf}] {os.path.basename(src_file)} in {format_elapsed(elapsed)}"
 
 def update_size_pbar(pbar, shared_val, total_bytes):
     while not pbar.disable and pbar.n < total_bytes:
@@ -349,7 +349,7 @@ def update_size_pbar(pbar, shared_val, total_bytes):
         time.sleep(0.5)
 
 def main():
-    logging.info(f"🚀 Starting AV1 job processor on {MACHINE_ID}")
+    logging.info(f"Starting AV1 job processor on {MACHINE_ID}")
     ensure_dirs()
     try_acquire_lock_loop()
 
@@ -359,15 +359,15 @@ def main():
 
     pause_flag.set()
     if args.throttle:
-        logging.info("🛡️  CPU throttling enabled.")
+        logging.info("CPU throttling enabled.")
         threading.Thread(target=cpu_watchdog, daemon=True).start()
     else:
-        logging.info("🚀 CPU throttling disabled. Encoding at full capacity.")
+        logging.info("CPU throttling disabled. Encoding at full capacity.")
         pause_flag.set()
 
     chunk = claim_files()
     if not chunk:
-        logging.info(f"🚫 No files claimed by {MACHINE_ID}")
+        logging.info(f"No files claimed by {MACHINE_ID}")
         stop_renew.set()
         os.remove(os.path.join(LOCKS_DIR, f"{MACHINE_ID}.lock"))
         return
@@ -393,7 +393,7 @@ def main():
     manager = Manager()
     shared_bytes = manager.Value('i', 0)
 
-    size_pbar = tqdm(total=total_bytes, unit='B', unit_scale=True, desc=f"📦 Total Progress", position=0)
+    size_pbar = tqdm(total=total_bytes, unit='B', unit_scale=True, desc=f"Total Progress", position=0)
     pbar_thread = threading.Thread(target=update_size_pbar, args=(size_pbar, shared_bytes, total_bytes))
     pbar_thread.start()
 
@@ -406,7 +406,7 @@ def main():
                 tqdm.write(result)
                 logging.info(result)
             except Exception as e:
-                logging.error(f"❌ Encoding task failed: {e}")
+                logging.error(f"Encoding task failed: {e}")
                 with open("failed_encodes.log", "a") as f:
                     f.write(f"{e}\n")
 
@@ -421,7 +421,7 @@ def main():
         shutil.move(os.path.join(IN_PROGRESS, rel), done_dst)
         logging.debug(f"Moved to done: {rel}")
 
-    logging.info(f"✅ {MACHINE_ID} finished processing.")
+    logging.info(f"{MACHINE_ID} finished processing.")
 
 if __name__ == "__main__":
     main()
