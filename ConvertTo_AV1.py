@@ -374,39 +374,48 @@ def update_size_pbar(pbar, shared_val, total_bytes):
         pbar.refresh()
         time.sleep(0.5)
 
+def has_files(base_dir):
+    return any(file.lower().endswith('.mp4') for _, _, files in os.walk(base_dir) for file in files)
+
 def main():
     logging.info(f"Starting AV1 job processor on {MACHINE_ID}")
     ensure_dirs()
-    try_acquire_lock_loop()
 
-    stop_renew = threading.Event()
-    renew_thread = threading.Thread(target=renew_lock, args=(stop_renew,), daemon=True)
-    renew_thread.start()
+    processing_files_exist = has_files(TMP_PROCESSING)
 
-    pause_flag.set()
-    if args.throttle:
-        logging.info("CPU throttling enabled.")
-        threading.Thread(target=cpu_watchdog, daemon=True).start()
-    else:
-        logging.info("CPU throttling disabled. Encoding at full capacity.")
+    if not processing_files_exist:
+        try_acquire_lock_loop()
+        stop_renew = threading.Event()
+        renew_thread = threading.Thread(target=renew_lock, args=(stop_renew,), daemon=True)
+        renew_thread.start()
+
         pause_flag.set()
+        if args.throttle:
+            logging.info("CPU throttling enabled.")
+            threading.Thread(target=cpu_watchdog, daemon=True).start()
+        else:
+            logging.info("CPU throttling disabled. Encoding at full capacity.")
+            pause_flag.set()
 
-    chunk = claim_files()
-    if not chunk:
-        logging.info(f"No files claimed by {MACHINE_ID}")
+        chunk = claim_files()
+        if not chunk:
+            logging.info(f"No files claimed by {MACHINE_ID}")
+            stop_renew.set()
+            os.remove(os.path.join(LOCKS_DIR, f"{MACHINE_ID}.lock"))
+            return
+
         stop_renew.set()
+        renew_thread.join()
         os.remove(os.path.join(LOCKS_DIR, f"{MACHINE_ID}.lock"))
-        return
 
-    stop_renew.set()
-    renew_thread.join()
-    os.remove(os.path.join(LOCKS_DIR, f"{MACHINE_ID}.lock"))
-
-    for src, rel in chunk:
-        dst = os.path.join(TMP_PROCESSING, rel)
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        copy_with_progress(os.path.join(IN_PROGRESS, rel), dst, desc=f"Copying {os.path.basename(rel)}")
-        logging.debug(f"Copied to processing dir: {rel}")
+        for src, rel in chunk:
+            dst = os.path.join(TMP_PROCESSING, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            copy_with_progress(os.path.join(IN_PROGRESS, rel), dst, desc=f"Copying {os.path.basename(rel)}")
+            logging.debug(f"Copied to processing dir: {rel}")
+    else:
+        logging.info("Resuming from existing TMP_PROCESSING files...")
+        chunk = []  # no new files claimed; this avoids moving from IN_PROGRESS later
 
     task_queue = []
     total_bytes = 0
