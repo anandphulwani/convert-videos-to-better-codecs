@@ -169,6 +169,25 @@ CHUNK_SIZE = 1 * 1024 * 1024 * 1024
 
 pause_flag = threading.Event()
 
+def copy_with_progress(src, dst, desc="Copying"):
+    total_size = os.path.getsize(src)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+
+    with open(src, 'rb') as fsrc, open(dst, 'wb') as fdst:
+        with tqdm(total=total_size, unit='B', unit_scale=True, desc=desc, leave=False) as pbar:
+            while True:
+                buf = fsrc.read(1024 * 1024)  # 1 MB
+                if not buf:
+                    break
+                fdst.write(buf)
+                pbar.update(len(buf))
+
+    shutil.copystat(src, dst)  # Preserve metadata like modification time
+
+def move_with_progress(src, dst, desc="Moving"):
+    copy_with_progress(src, dst, desc)
+    os.remove(src)
+
 def ensure_dirs():
     dirs = [LOCKS_DIR, TO_ASSIGN, IN_PROGRESS, DONE_DIR, TMP_PROCESSING]
     for d in dirs:
@@ -251,7 +270,7 @@ def claim_files():
     for src, rel in chunk:
         dst = os.path.join(IN_PROGRESS, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
-        shutil.move(src, dst)
+        move_with_progress(src, dst, desc=f"Moving {os.path.basename(src)}")
         logging.debug(f"Moved file to in_progress: {rel}")
 
     return chunk
@@ -341,7 +360,7 @@ def encode_file(src_file, rel_path, crf, bytes_encoded):
         logging.error(f"FFmpeg failed for {rel_path} [CRF {crf}]")
         return f"[CRF {crf}] Failed {rel_path}"
 
-    shutil.move(out_file, final_dst)
+    move_with_progress(out_file, final_dst, desc=f"Moving {os.path.basename(out_file)}")
     elapsed = time.time() - start_time
     return f"[CRF {crf}] {os.path.basename(src_file)} in {format_elapsed(elapsed)}"
 
@@ -382,7 +401,7 @@ def main():
     for src, rel in chunk:
         dst = os.path.join(TMP_PROCESSING, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
-        shutil.copy2(os.path.join(IN_PROGRESS, rel), dst)
+        copy_with_progress(os.path.join(IN_PROGRESS, rel), dst, desc=f"Copying {os.path.basename(rel)}")
         logging.debug(f"Copied to processing dir: {rel}")
 
     task_queue = []
@@ -421,7 +440,7 @@ def main():
     for _, rel in chunk:
         done_dst = os.path.join(DONE_DIR, rel)
         os.makedirs(os.path.dirname(done_dst), exist_ok=True)
-        shutil.move(os.path.join(IN_PROGRESS, rel), done_dst)
+        move_with_progress(os.path.join(IN_PROGRESS, rel), done_dst, desc=f"Moving {os.path.basename(rel)}")
         logging.debug(f"Moved to done: {rel}")
 
     logging.info(f"{MACHINE_ID} finished processing.")
