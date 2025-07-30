@@ -196,9 +196,12 @@ def try_acquire_lock_loop():
 def renew_lock(stop_event):
     lock_path = os.path.join(LOCKS_DIR, f"{MACHINE_ID}.lock")
     while not stop_event.is_set():
-        with open(lock_path, 'w') as f:
-            f.write(f"Updated at {datetime.datetime.now()}")
-        logging.debug("🔄 Lock file renewed")
+        try:
+            with open(lock_path, 'w') as f:
+                f.write(f"Updated at {datetime.datetime.now()}")
+            logging.debug("🔄 Lock file renewed")
+        except Exception as e:
+            logging.error(f"❌ Failed to renew lock file: {e}")
         stop_event.wait(600)
 
 def cpu_watchdog():
@@ -276,6 +279,9 @@ def encode_file(src_file, rel_path, crf, bytes_encoded):
     os.makedirs(os.path.dirname(out_file), exist_ok=True)
     cmd = ffmpeg_cmd_av1_crf(src_file, out_file, crf)
     duration = get_duration(src_file)
+    if duration is None:
+        logging.warning(f"⚠️ Duration not found for {rel_path}, skipping file.")
+        return f"⚠️ [CRF {crf}] Skipped {rel_path} (duration not found)"
     file_size = os.path.getsize(src_file)
     start_time = time.time()
 
@@ -310,13 +316,18 @@ def encode_file(src_file, rel_path, crf, bytes_encoded):
     pbar.n = duration or pbar.n
     pbar.close()
 
+    if process.returncode != 0 or not os.path.exists(out_file):
+        logging.error(f"❌ FFmpeg failed for {rel_path} [CRF {crf}]")
+        return f"❌ [CRF {crf}] Failed {rel_path}"
+
     shutil.move(out_file, final_dst)
     elapsed = time.time() - start_time
     return f"✅ [CRF {crf}] {os.path.basename(src_file)} in {format_elapsed(elapsed)}"
 
 def update_size_pbar(pbar, shared_val, total_bytes):
     while not pbar.disable and pbar.n < total_bytes:
-        pbar.n = shared_val.value
+        with shared_val.get_lock():
+            pbar.n = shared_val.value
         pbar.refresh()
         time.sleep(0.5)
 
@@ -373,9 +384,14 @@ def main():
         futures = [executor.submit(encode_file, src, rel, crf, shared_bytes)
                    for src, rel, crf, _ in task_queue]
         for future in as_completed(futures):
-            result = future.result()
-            tqdm.write(result)
-            logging.info(result)
+            try:
+                result = future.result()
+                tqdm.write(result)
+                logging.info(result)
+            except Exception as e:
+                logging.error(f"❌ Encoding task failed: {e}")
+                with open("failed_encodes.log", "a") as f:
+                    f.write(f"{e}\n")
 
     size_pbar.n = total_bytes
     size_pbar.refresh()
