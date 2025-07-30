@@ -70,7 +70,7 @@ import threading
 import logging
 import argparse
 from multiprocessing import Manager
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 import re
 import time
@@ -396,7 +396,7 @@ def main():
     pbar_thread = threading.Thread(target=update_size_pbar, args=(size_pbar, shared_bytes, total_bytes))
     pbar_thread.start()
 
-    with ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = [executor.submit(encode_file, src, rel, crf, shared_bytes)
                    for src, rel, crf, _ in task_queue]
         for future in as_completed(futures):
