@@ -196,6 +196,10 @@ def ensure_dirs():
     for crf in CRF_VALUES:
         tmp_out = TMP_OUTPUT_ROOT.format(crf)
         final_out = FINAL_OUTPUT_ROOT.format(crf)
+        # Clear tmp output dir
+        if os.path.exists(tmp_out):
+            shutil.rmtree(tmp_out)
+            logging.info(f"Cleared temp output directory: {tmp_out}")
         os.makedirs(tmp_out, exist_ok=True)
         os.makedirs(final_out, exist_ok=True)
         logging.debug(f"Ensured CRF directories: {tmp_out}, {final_out}")
