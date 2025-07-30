@@ -61,13 +61,31 @@ import os
 import shutil
 import subprocess
 import threading
+import logging
+import argparse
 from multiprocessing import Manager
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 import re
 import time
 import datetime
-import psutil  # New: for CPU monitoring
+import psutil
+
+# CLI argument parsing
+parser = argparse.ArgumentParser(description="Distributed AV1 encoding job processor")
+parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+args = parser.parse_args()
+
+# Setup logging
+LOG_FILE = '/root/av1_job_processor.log'
+logging.basicConfig(
+    level=logging.DEBUG if args.debug else logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler()
+    ]
+)
 
 # Configuration
 MACHINE_ID = os.getenv("MACHINE_ID", "machineX")
@@ -80,21 +98,26 @@ DONE_DIR = os.path.join(JOBS_DIR, 'done')
 TMP_ROOT = './tmp_input'
 TMP_PROCESSING = os.path.join(TMP_ROOT, 'processing')
 CRF_VALUES = [24, 60]
-MAX_CPU_UTIL = 0.8  # Use only 80% of available CPUs
+MAX_CPU_UTIL = 0.8
 MAX_WORKERS = max(1, int(psutil.cpu_count(logical=True) * MAX_CPU_UTIL))
-CHUNK_SIZE = 1 * 1024 * 1024 * 1024  # 1 GB
+CHUNK_SIZE = 1 * 1024 * 1024 * 1024
 
-# Global pause flag
 pause_flag = threading.Event()
 
 def ensure_dirs():
-    for d in [LOCKS_DIR, TO_ASSIGN, IN_PROGRESS, DONE_DIR, TMP_PROCESSING]:
+    dirs = [LOCKS_DIR, TO_ASSIGN, IN_PROGRESS, DONE_DIR, TMP_PROCESSING]
+    for d in dirs:
         os.makedirs(d, exist_ok=True)
+        logging.debug(f"Ensured directory exists: {d}")
     for crf in CRF_VALUES:
-        os.makedirs(f'./tmp_output_av1_crf{crf}', exist_ok=True)
-        os.makedirs(os.path.join('./ForTesting_Out', f'AV1_crf{crf}'), exist_ok=True)
+        tmp_out = f'./tmp_output_av1_crf{crf}'
+        final_out = os.path.join('./ForTesting_Out', f'AV1_crf{crf}')
+        os.makedirs(tmp_out, exist_ok=True)
+        os.makedirs(final_out, exist_ok=True)
+        logging.debug(f"Ensured CRF directories: {tmp_out}, {final_out}")
 
 def get_all_files_sorted(base_dir):
+    logging.debug(f"Scanning directory: {base_dir}")
     all_files = []
     for root, _, files in os.walk(base_dir):
         for file in files:
@@ -102,6 +125,7 @@ def get_all_files_sorted(base_dir):
                 full_path = os.path.join(root, file)
                 rel_path = os.path.relpath(full_path, base_dir)
                 all_files.append((full_path, rel_path))
+    logging.debug(f"Found {len(all_files)} .mp4 files")
     return sorted(all_files, key=lambda x: x[1])
 
 def try_acquire_lock_loop():
@@ -111,14 +135,14 @@ def try_acquire_lock_loop():
             mod_time = datetime.datetime.fromtimestamp(os.path.getmtime(lock_path))
             age = datetime.datetime.now() - mod_time
             if age.total_seconds() > 900:
-                print(f"⚠️ Found stale lock for {MACHINE_ID}, removing...")
+                logging.warning(f"⚠️ Found stale lock for {MACHINE_ID}, removing...")
                 os.remove(lock_path)
         try:
             with open(lock_path, 'x'):
-                print(f"🔓 Lock acquired by {MACHINE_ID}")
+                logging.info(f"🔓 Lock acquired by {MACHINE_ID}")
                 return
         except FileExistsError:
-            print(f"⏳ {MACHINE_ID} waiting for lock... retrying in 5 min")
+            logging.info(f"⏳ {MACHINE_ID} waiting for lock... retrying in 5 min")
             time.sleep(300)
 
 def renew_lock(stop_event):
@@ -126,17 +150,19 @@ def renew_lock(stop_event):
     while not stop_event.is_set():
         with open(lock_path, 'w') as f:
             f.write(f"Updated at {datetime.datetime.now()}")
+        logging.debug("🔄 Lock file renewed")
         stop_event.wait(600)
 
 def cpu_watchdog():
     while True:
         usage = psutil.cpu_percent(interval=5)
+        logging.debug(f"🧠 CPU usage: {usage}%")
         if usage >= 95:
-            print("⚠️ High CPU usage detected. Pausing encoding...")
+            logging.warning("⚠️ High CPU usage detected. Pausing encoding...")
             pause_flag.clear()
         elif usage <= 10:
             if not pause_flag.is_set():
-                print("✅ CPU usage normalized. Resuming encoding...")
+                logging.info("✅ CPU usage normalized. Resuming encoding...")
             pause_flag.set()
 
 def claim_files():
@@ -144,6 +170,7 @@ def claim_files():
     chunk, size = [], 0
     for full_path, rel_path in all_files:
         file_size = os.path.getsize(full_path)
+        logging.debug(f"Evaluating file: {rel_path} ({file_size} bytes)")
         if size + file_size > CHUNK_SIZE and chunk:
             break
         size += file_size
@@ -153,6 +180,7 @@ def claim_files():
         dst = os.path.join(IN_PROGRESS, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.move(src, dst)
+        logging.debug(f"Moved file to in_progress: {rel}")
 
     return chunk
 
@@ -165,14 +193,15 @@ def get_duration(file_path):
     ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
         return int(float(result.stdout.strip()))
-    except:
+    except Exception as e:
+        logging.debug(f"ffprobe failed for {file_path}: {e}")
         return None
 
 def format_elapsed(seconds):
     return time.strftime("%H:%M:%S", time.gmtime(seconds))
 
 def ffmpeg_cmd_av1_crf(src, out, crf):
-    return [
+    cmd = [
         'ffmpeg', '-i', src,
         '-c:v', 'libaom-av1',
         '-crf', str(crf),
@@ -184,6 +213,8 @@ def ffmpeg_cmd_av1_crf(src, out, crf):
         '-b:a', '96k',
         out
     ]
+    logging.debug(f"FFmpeg command: {' '.join(cmd)}")
+    return cmd
 
 def encode_file(src_file, rel_path, crf, bytes_encoded):
     output_dir = f'./tmp_output_av1_crf{crf}'
@@ -200,6 +231,7 @@ def encode_file(src_file, rel_path, crf, bytes_encoded):
     file_size = os.path.getsize(src_file)
     start_time = time.time()
 
+    logging.debug(f"Encoding {rel_path} [CRF {crf}]")
     pbar = tqdm(total=duration or 100, desc=f"⏳ CRF{crf}: {os.path.basename(src_file)}", unit='s', leave=False)
     process = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
     time_pattern = re.compile(r'time=(\d+):(\d+):(\d+).(\d+)')
@@ -241,6 +273,7 @@ def update_size_pbar(pbar, shared_val, total_bytes):
         time.sleep(0.5)
 
 def main():
+    logging.info(f"🚀 Starting AV1 job processor on {MACHINE_ID}")
     ensure_dirs()
     try_acquire_lock_loop()
 
@@ -253,20 +286,20 @@ def main():
 
     chunk = claim_files()
     if not chunk:
-        print(f"🚫 No files claimed by {MACHINE_ID}")
+        logging.info(f"🚫 No files claimed by {MACHINE_ID}")
         stop_renew.set()
         os.remove(os.path.join(LOCKS_DIR, f"{MACHINE_ID}.lock"))
         return
-    
-    # Lock no longer needed after claiming files
+
     stop_renew.set()
     renew_thread.join()
     os.remove(os.path.join(LOCKS_DIR, f"{MACHINE_ID}.lock"))
-    
+
     for src, rel in chunk:
         dst = os.path.join(TMP_PROCESSING, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy2(os.path.join(IN_PROGRESS, rel), dst)
+        logging.debug(f"Copied to processing dir: {rel}")
 
     task_queue = []
     total_bytes = 0
@@ -289,6 +322,7 @@ def main():
         for future in as_completed(futures):
             result = future.result()
             tqdm.write(result)
+            logging.info(result)
 
     size_pbar.n = total_bytes
     size_pbar.refresh()
@@ -299,8 +333,9 @@ def main():
         done_dst = os.path.join(DONE_DIR, rel)
         os.makedirs(os.path.dirname(done_dst), exist_ok=True)
         shutil.move(os.path.join(IN_PROGRESS, rel), done_dst)
+        logging.debug(f"Moved to done: {rel}")
 
-    print(f"\n✅ {MACHINE_ID} finished processing.")
+    logging.info(f"✅ {MACHINE_ID} finished processing.")
 
 if __name__ == "__main__":
     main()
