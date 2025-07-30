@@ -96,8 +96,13 @@ LOCKS_DIR = os.path.join(SFTP_ROOT, 'locks')
 TO_ASSIGN = os.path.join(JOBS_DIR, 'to_assign')
 IN_PROGRESS = os.path.join(JOBS_DIR, 'in_progress', MACHINE_ID)
 DONE_DIR = os.path.join(JOBS_DIR, 'done')
+
 TMP_ROOT = './tmp_input'
 TMP_PROCESSING = os.path.join(TMP_ROOT, 'processing')
+
+TMP_OUTPUT_ROOT = './tmp_output_av1_crf{}'   # Format string for CRF values
+FINAL_OUTPUT_ROOT = './ForTesting_Out/AV1_crf{}'  # Format string for CRF values
+
 CRF_VALUES = [24, 60]
 MAX_CPU_UTIL = 0.8
 MAX_WORKERS = max(1, int(psutil.cpu_count(logical=True) * MAX_CPU_UTIL))
@@ -111,8 +116,8 @@ def ensure_dirs():
         os.makedirs(d, exist_ok=True)
         logging.debug(f"Ensured directory exists: {d}")
     for crf in CRF_VALUES:
-        tmp_out = f'./tmp_output_av1_crf{crf}'
-        final_out = os.path.join('./ForTesting_Out', f'AV1_crf{crf}')
+        tmp_out = TMP_OUTPUT_ROOT.format(crf)
+        final_out = FINAL_OUTPUT_ROOT.format(crf)
         os.makedirs(tmp_out, exist_ok=True)
         os.makedirs(final_out, exist_ok=True)
         logging.debug(f"Ensured CRF directories: {tmp_out}, {final_out}")
@@ -218,8 +223,8 @@ def ffmpeg_cmd_av1_crf(src, out, crf):
     return cmd
 
 def encode_file(src_file, rel_path, crf, bytes_encoded):
-    output_dir = f'./tmp_output_av1_crf{crf}'
-    target_dir = os.path.join('./ForTesting_Out', f'AV1_crf{crf}')
+    output_dir = TMP_OUTPUT_ROOT.format(crf)
+    target_dir = FINAL_OUTPUT_ROOT.format(crf)
     out_file = os.path.join(output_dir, rel_path)
     final_dst = os.path.join(target_dir, rel_path)
 
