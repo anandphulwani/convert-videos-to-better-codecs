@@ -74,6 +74,7 @@ import psutil
 # CLI argument parsing
 parser = argparse.ArgumentParser(description="Distributed AV1 encoding job processor")
 parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+parser.add_argument("--throttle", action="store_true", help="Enable CPU usage throttling")
 args = parser.parse_args()
 
 # Setup logging
@@ -282,7 +283,12 @@ def main():
     renew_thread.start()
 
     pause_flag.set()
-    threading.Thread(target=cpu_watchdog, daemon=True).start()
+    if args.throttle:
+        logging.info("🛡️  CPU throttling enabled.")
+        threading.Thread(target=cpu_watchdog, daemon=True).start()
+    else:
+        logging.info("🚀 CPU throttling disabled. Encoding at full capacity.")
+        pause_flag.set()
 
     chunk = claim_files()
     if not chunk:
