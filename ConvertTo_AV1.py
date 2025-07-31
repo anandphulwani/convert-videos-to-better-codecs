@@ -307,8 +307,10 @@ def format_elapsed(seconds):
     return time.strftime("%H:%M:%S", time.gmtime(seconds))
 
 def ffmpeg_cmd_av1_crf(src, out, crf):
+    # use -nostats to suppress the carriage-return stats,
+    # and -progress pipe:1 to print newline-terminated progress to stdout
     cmd = [
-        'ffmpeg', '-i', src,
+        'ffmpeg', '-y', '-i', src,
         '-c:v', 'libaom-av1',
         '-crf', str(crf),
         '-b:v', '0',
@@ -317,6 +319,8 @@ def ffmpeg_cmd_av1_crf(src, out, crf):
         '-threads', '0',
         '-c:a', 'libopus',
         '-b:a', '96k',
+        '-nostats',
+        '-progress', 'pipe:1',
         out
     ]
     logging.debug(f"FFmpeg command: {' '.join(cmd)}")
@@ -342,34 +346,29 @@ def encode_file(src_file, rel_path, crf, bytes_encoded):
 
     logging.debug(f"Encoding {rel_path} [CRF {crf}]")
     pbar = tqdm(total=duration or 100, desc=f"CRF{crf}: {os.path.basename(src_file)}", unit='s', leave=False)
-    process = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
-    time_pattern = re.compile(r'time=(\d+):(\d+):(\d+).(\d+)')
 
+    process = subprocess.Popen(cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL,
+                            text=True,
+                            bufsize=1)
+
+    # parse progress from stdout:
     last_progress = 0
-    while process.poll() is None:
-        line = process.stderr.readline()
-        if not line:
-            continue
-
-        while not pause_flag.is_set():
-            time.sleep(1)
-
-        match = time_pattern.search(line)
-        if match:
-            h, m, s, ms = map(int, match.groups())
-            seconds = h * 3600 + m * 60 + s
-            pbar.n = seconds
-            pbar.refresh()
-            if duration:
-                percent = seconds / duration
-                current_progress = int(file_size * percent)
-                delta = current_progress - last_progress
-                last_progress = current_progress
-                bytes_encoded.value += max(0, delta)
-
-    process.wait()
-    pbar.n = duration or pbar.n
-    pbar.close()
+    for line in process.stdout:
+        if line.startswith('out_time_ms='):
+            out_ms = int(line.split('=',1)[1].strip())
+            seconds = out_ms / 1_000_000
+            delta = seconds - pbar.n
+            if delta > 0:
+                if duration:
+                    percent = seconds / duration
+                    current_progress = int(file_size * percent)
+                    delta_bytes = current_progress - last_progress
+                    if delta_bytes > 0:
+                        bytes_encoded.value += delta_bytes
+                        last_progress = current_progress
+                pbar.update(int(round(delta)))
 
     if process.returncode != 0 or not os.path.exists(out_file):
         logging.error(f"FFmpeg failed for {rel_path} [CRF {crf}]")
@@ -380,9 +379,13 @@ def encode_file(src_file, rel_path, crf, bytes_encoded):
     return f"[CRF {crf}] {os.path.basename(src_file)} in {format_elapsed(elapsed)}"
 
 def update_size_pbar(pbar, shared_val, total_bytes):
-    while not pbar.disable and pbar.n < total_bytes:
-        pbar.n = shared_val.value
-        pbar.refresh()
+    while True:
+        current = shared_val.value
+        delta = current - pbar.n
+        if delta > 0:
+            pbar.update(delta)
+        if current >= total_bytes:
+            break
         time.sleep(0.5)
 
 def has_files(base_dir):
