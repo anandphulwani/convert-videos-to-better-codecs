@@ -1,0 +1,41 @@
+import os
+import shutil
+import argparse
+import sys
+import logging
+import psutil
+
+from helpers.generate_machine_id import generate_machine_id
+
+# CLI argument parsing
+parser = argparse.ArgumentParser(description="Distributed AV1 encoding job processor")
+parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+parser.add_argument("--throttle", action="store_true", help="Enable CPU usage throttling")
+args = parser.parse_args()
+
+# Configuration
+MACHINE_ID = os.getenv("MACHINE_ID", generate_machine_id())
+
+if not MACHINE_ID.strip():
+    logging.critical("MACHINE_ID is empty. Exiting.")
+    sys.exit(1)
+
+SFTP_ROOT = '/mnt/AAA.BBB.CCC.DDD_remote/Source_Videos/'
+JOBS_DIR = os.path.join(SFTP_ROOT, 'jobs')
+LOCKS_DIR = os.path.join(SFTP_ROOT, 'locks')
+TO_ASSIGN = os.path.join(JOBS_DIR, 'to_assign')
+IN_PROGRESS = os.path.join(JOBS_DIR, 'in_progress', MACHINE_ID)
+DONE_DIR = os.path.join(JOBS_DIR, 'done')
+FAILED_DIR = os.path.join(JOBS_DIR, 'failed')
+LOGS_DIR = os.path.join(JOBS_DIR, 'logs', MACHINE_ID)
+
+TMP_PROCESSING = os.path.join('/tmp/tmp_input', 'processing')
+
+TMP_OUTPUT_ROOT = '/tmp/tmp_output_av1_crf{}'   # Format string for CRF values
+FINAL_OUTPUT_ROOT = '/mnt/AAA.BBB.CCC.DDD_remote/Source_Videos_AV1_crf{}'  # Format string for CRF values
+
+CRF_VALUES = [24, 60]
+MAX_CPU_UTIL = 0.4
+MAX_WORKERS = 10 if not args.throttle else max(1, int(psutil.cpu_count(logical=True) * MAX_CPU_UTIL))
+# CHUNK_SIZE = 0.000075 * 1024 * 1024 * 1024
+CHUNK_SIZE = 0.2 * 1024 * 1024 * 1024
