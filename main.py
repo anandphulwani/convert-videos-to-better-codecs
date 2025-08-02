@@ -12,12 +12,13 @@ from config import (
     TMP_OUTPUT_ROOT
 )
 from logging_utils import setup_logging, move_logs_to_central_output
-from file_ops import ensure_dirs, get_all_files_sorted, cleanup_working_folders, claim_files
+from preload_next_chunk import preload_next_chunk
+from file_ops import ensure_dirs, cleanup_working_folders
 from locks_ops import try_acquire_lock_loop, renew_lock
 from cpu_watchdog import cpu_watchdog
 from encode_file import encode_file
 from helpers.update_size_pbar import update_size_pbar
-from helpers.copy_and_move_with_progress import copy_with_progress, move_with_progress
+from helpers.copy_and_move_with_progress import move_with_progress
 from helpers.has_files import has_files
 from state import task_queue, next_chunk_ready, preload_lock, pause_flag
 
@@ -26,6 +27,10 @@ def main():
     from config import MACHINE_ID  # import here to log value once logging is ready
     logging.info(f"Starting AV1 job processor on {MACHINE_ID}")
     ensure_dirs()
+
+    preload_stop_event = threading.Event()
+    preload_thread = threading.Thread(target=preload_next_chunk, args=(preload_stop_event,), daemon=True)
+    preload_thread.start()
 
     first_iteration = True
 
@@ -48,7 +53,12 @@ def main():
                 logging.info("CPU throttling disabled. Encoding at full capacity.")
                 pause_flag.set()
 
-            chunk = claim_files()
+            # Wait for preload thread to get a chunk ready
+            logging.info("Waiting for next preloaded chunk...")
+            next_chunk_ready.wait()
+            with preload_lock:
+                chunk = task_queue.get()
+                next_chunk_ready.clear()
 
             if not chunk:
                 logging.info(f"No files claimed by {MACHINE_ID}")
@@ -61,22 +71,16 @@ def main():
             renew_thread.join()
             os.remove(os.path.join(LOCKS_DIR, f"{MACHINE_ID}.lock"))
 
-            for src, rel in chunk:
-                dst = os.path.join(TMP_PROCESSING, rel)
-                os.makedirs(os.path.dirname(dst), exist_ok=True)
-                copy_with_progress(os.path.join(IN_PROGRESS, rel), dst, desc=f"Copying {os.path.basename(rel)}")
-                logging.debug(f"Copied to processing dir: {rel}")
-
         else:
             logging.info("Resuming from existing TMP_PROCESSING files...")
             chunk = []  # no new files claimed; this avoids moving from IN_PROGRESS later
 
-        task_queue = []
+        task_info = []
         total_bytes = 0
-        for src, rel in get_all_files_sorted(TMP_PROCESSING):
+        for src, rel in chunk:
             size = os.path.getsize(src)
             for crf in CRF_VALUES:
-                task_queue.append((src, rel, crf, size))
+                task_info.append((src, rel, crf, size))
                 total_bytes += size
 
         manager = Manager()
@@ -90,7 +94,7 @@ def main():
         results = []
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             futures = [executor.submit(encode_file, src, rel, crf, shared_bytes)
-                    for src, rel, crf, _ in task_queue]
+                    for src, rel, crf, _ in task_info]
             for future in as_completed(futures):
                 try:
                     result = future.result()  # result is now [src_file, crf, status, message]
@@ -117,12 +121,9 @@ def main():
         for src_file, crf, status, message in results:
             if src_file is None:
                 continue
-            rel_path = next((rel for src, rel, crf_val, _ in task_queue if src == src_file and crf_val == crf), None)
+            rel_path = next((rel for src, rel, crf_val, _ in task_info if src == src_file and crf_val == crf), None)
             if rel_path:
-                success = status == "success"
-                if rel_path not in success_map:
-                    success_map[rel_path] = []
-                success_map[rel_path].append(success)
+                success_map.setdefault(rel_path, []).append(status == "success")
 
         for rel in success_map:
             all_success = all(success_map[rel])
@@ -149,7 +150,7 @@ def main():
                 logging.error(f"Failed to move file {rel} to final dir: {e}")
 
         cleanup_working_folders()
-        logging.info(f"{MACHINE_ID} finished processing batch; looping back to check for more jobs.")
+        logging.info(f"{MACHINE_ID} finished processing batch")
         move_logs_to_central_output()
         is_keyboard_interrupt = False
         try:
@@ -162,6 +163,7 @@ def main():
         finally:
             tqdm.write("Done or interrupted. Cleaning up...")
             if is_keyboard_interrupt:
+                preload_stop_event.set()
                 break
 
 if __name__ == "__main__":
