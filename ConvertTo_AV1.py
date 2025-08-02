@@ -388,6 +388,9 @@ def encode_file(src_file, rel_path, crf, bytes_encoded):
                         last_progress = current_progress
                 pbar.update(int(round(delta)))
 
+    # Wait for process to finish and get proper return code
+    process.wait()
+
     if process.returncode != 0 or not os.path.exists(out_file):
         logging.error(f"FFmpeg failed for {rel_path} [CRF {crf}]")
         return [src_file, crf, "failed", f"FFmpeg failed for {rel_path}"]
