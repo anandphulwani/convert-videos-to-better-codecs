@@ -92,29 +92,35 @@ class ErrorWarningFilter(logging.Filter):
     def filter(self, record):
         return record.levelno >= logging.WARNING
 
-timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-LOG_FILE = f'./av1_job_{timestamp}.log'
-ERROR_LOG_FILE = f'./errors_av1_job_{timestamp}.log'
+def setup_logging():
+    global LOG_FILE, ERROR_LOG_FILE
 
-# General log file handler
-file_handler = logging.FileHandler(LOG_FILE)
-file_handler.setLevel(logging.DEBUG if args.debug else logging.INFO)
-file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    LOG_FILE = f'./av1_job_{timestamp}.log'
+    ERROR_LOG_FILE = f'./errors_av1_job_{timestamp}.log'
 
-# Error/Warning file handler
-error_handler = logging.FileHandler(ERROR_LOG_FILE)
-error_handler.setLevel(logging.WARNING)
-error_handler.addFilter(ErrorWarningFilter())
-error_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+    # Remove old handlers
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
 
-# Console output handler
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.DEBUG if args.debug else logging.INFO)
-console_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+    # General log file handler
+    file_handler = logging.FileHandler(LOG_FILE)
+    file_handler.setLevel(logging.DEBUG if args.debug else logging.INFO)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
 
-# Add handlers to root logger
-logging.getLogger().setLevel(logging.DEBUG if args.debug else logging.INFO)
-logging.getLogger().handlers = [file_handler, error_handler, console_handler]
+    # Error/Warning file handler
+    error_handler = logging.FileHandler(ERROR_LOG_FILE)
+    error_handler.setLevel(logging.WARNING)
+    error_handler.addFilter(ErrorWarningFilter())
+    error_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+
+    # Console output handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.DEBUG if args.debug else logging.INFO)
+    console_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+
+    logging.getLogger().setLevel(logging.DEBUG if args.debug else logging.INFO)
+    logging.getLogger().handlers = [file_handler, error_handler, console_handler]
 
 def generate_machine_id():
     # Get IP address
@@ -402,10 +408,15 @@ def has_files(base_dir):
     return any(file.lower().endswith('.mp4') for _, _, files in os.walk(base_dir) for file in files)
 
 def main():
+    setup_logging()  # Setup initial log files
     logging.info(f"Starting AV1 job processor on {MACHINE_ID}")
     ensure_dirs()
 
+    first_iteration = True
+
     while True:
+        (first_iteration := False) if first_iteration else setup_logging()
+
         processing_files_exist = has_files(TMP_PROCESSING)
 
         if not processing_files_exist:
