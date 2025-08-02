@@ -349,14 +349,16 @@ def encode_file(src_file, rel_path, crf, bytes_encoded):
     final_dst = os.path.join(target_dir, rel_path)
 
     if os.path.exists(final_dst):
-        return f"[CRF {crf}] Skipped {rel_path} (already exists)"
+        return [src_file, crf, "skipped", f"{rel_path} (already exists)"]
 
     os.makedirs(os.path.dirname(out_file), exist_ok=True)
     cmd = ffmpeg_cmd_av1_crf(src_file, out_file, crf)
     duration = get_duration(src_file)
+
     if duration is None:
         logging.warning(f"Duration not found for {rel_path}, skipping file.")
-        return f"[CRF {crf}] Skipped {rel_path} (duration not found)"
+        return [src_file, crf, "skipped", f"{rel_path} (duration not found)"]
+
     file_size = os.path.getsize(src_file)
     start_time = time.time()
 
@@ -388,11 +390,11 @@ def encode_file(src_file, rel_path, crf, bytes_encoded):
 
     if process.returncode != 0 or not os.path.exists(out_file):
         logging.error(f"FFmpeg failed for {rel_path} [CRF {crf}]")
-        return f"[CRF {crf}] Failed {rel_path}"
+        return [src_file, crf, "failed", f"FFmpeg failed for {rel_path}"]
 
     move_with_progress(out_file, final_dst, desc=f"Moving {os.path.basename(out_file)}")
     elapsed = time.time() - start_time
-    return f"[CRF {crf}] {os.path.basename(src_file)} in {format_elapsed(elapsed)}"
+    return [src_file, crf, "success", f"{os.path.basename(src_file)} in {format_elapsed(elapsed)}"]
 
 def update_size_pbar(pbar, shared_val, total_bytes):
     while True:
@@ -510,15 +512,16 @@ def main():
                     for src, rel, crf, _ in task_queue]
             for future in as_completed(futures):
                 try:
-                    result = future.result()
-                    tqdm.write(result)
-                    logging.info(result)
+                    result = future.result()  # result is now [src_file, crf, status, message]
+                    src_file, crf, status, message = result
+                    tqdm.write(f"[CRF {crf}] {status.upper()}: {message}")
+                    logging.info(f"[CRF {crf}] {status.upper()}: {message}")
                     results.append(result)
                 except Exception as e:
                     logging.error(f"Encoding task failed: {e}")
                     with open("failed_encodes.log", "a") as f:
                         f.write(f"{e}\n")
-                    results.append(f"Failed: {e}")
+                    results.append([None, None, "failed", str(e)])
 
         size_pbar.n = total_bytes
         size_pbar.refresh()
@@ -527,17 +530,15 @@ def main():
 
         # Determine which files succeeded entirely
         success_map = {}
-        for result in results:
-            match = re.search(r"\[CRF (\d+)] (.+?)(?: in| Failed)", result)
-            if match:
-                crf = int(match.group(1))
-                file = match.group(2)
-                rel_path = next((rel for _, rel, _, _ in task_queue if os.path.basename(rel) == file), None)
-                if rel_path:
-                    success = "Failed" not in result
-                    if rel_path not in success_map:
-                        success_map[rel_path] = []
-                    success_map[rel_path].append(success)
+        for src_file, crf, status, message in results:
+            if src_file is None:
+                continue
+            rel_path = next((rel for src, rel, crf_val, _ in task_queue if src == src_file and crf_val == crf), None)
+            if rel_path:
+                success = status == "success"
+                if rel_path not in success_map:
+                    success_map[rel_path] = []
+                success_map[rel_path].append(success)
 
         for rel in success_map:
             all_success = all(success_map[rel])
