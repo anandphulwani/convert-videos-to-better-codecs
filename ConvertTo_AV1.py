@@ -407,6 +407,41 @@ def update_size_pbar(pbar, shared_val, total_bytes):
 def has_files(base_dir):
     return any(file.lower().endswith('.mp4') for _, _, files in os.walk(base_dir) for file in files)
 
+def find_all_dirs(root_dirs):
+    all_dirs = []
+    for root in root_dirs:
+        for dirpath, dirnames, _ in os.walk(root, topdown=False):
+            all_dirs.append(dirpath)
+    return all_dirs
+
+def remove_empty_dirs(dirs):
+    removed_count = 0
+    for dirpath in tqdm(dirs, desc="Removing empty directories"):
+        if os.path.isdir(dirpath) and not os.listdir(dirpath):
+            try:
+                os.rmdir(dirpath)
+                removed_count += 1
+            except Exception as e:
+                tqdm.write(f"Could not remove {dirpath}: {e}")
+    return removed_count
+
+def cleanup_working_folders():
+    logging.info("Cleaning up WORKING folders...")
+    for src, rel in get_all_files_sorted(TMP_PROCESSING):
+        try:
+            os.remove(src)
+            logging.debug(f"Removed processed file from TMP_PROCESSING: {rel}")
+        except Exception as e:
+            logging.error(f"Failed to delete {rel} from TMP_PROCESSING: {e}")
+
+    # Remove empty directories with progress bar
+    all_main_dirs = [TO_ASSIGN, IN_PROGRESS, os.path.dirname(IN_PROGRESS), 
+                     DONE_DIR, FAILED_DIR, LOGS_DIR, os.path.dirname(LOGS_DIR), 
+                     TMP_PROCESSING, os.path.dirname(TMP_OUTPUT_ROOT)]
+    all_dirs = find_all_dirs(all_main_dirs)
+    removed = remove_empty_dirs(all_dirs)
+    print(f"Removed {removed} empty directories.")
+
 def main():
     setup_logging()  # Setup initial log files
     logging.info(f"Starting AV1 job processor on {MACHINE_ID}")
@@ -516,6 +551,7 @@ def main():
             except Exception as e:
                 logging.error(f"Failed to move file {rel} to final dir: {e}")
 
+        cleanup_working_folders()
         logging.info(f"{MACHINE_ID} finished processing batch; looping back to check for more jobs.")
         move_logs_to_central_output()
         is_keyboard_interrupt = False
