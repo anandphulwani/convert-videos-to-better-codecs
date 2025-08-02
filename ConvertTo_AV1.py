@@ -427,6 +427,7 @@ def main():
                 logging.info(f"No files claimed by {MACHINE_ID}")
                 stop_renew.set()
                 os.remove(os.path.join(LOCKS_DIR, f"{MACHINE_ID}.lock"))
+                move_logs_to_central_output()
                 break
 
             stop_renew.set()
@@ -504,8 +505,8 @@ def main():
             except Exception as e:
                 logging.error(f"Failed to move file {rel} to final dir: {e}")
 
-        save_logs_to_central_output()
         logging.info(f"{MACHINE_ID} finished processing batch; looping back to check for more jobs.")
+        move_logs_to_central_output()
         is_keyboard_interrupt = False
         try:
             sleep_time = 300  # total seconds
