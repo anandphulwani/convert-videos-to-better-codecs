@@ -8,7 +8,8 @@ import os
 
 from config import (
     args, CRF_VALUES, MAX_WORKERS, IN_PROGRESS, 
-    LOCKS_DIR, DONE_DIR, FAILED_DIR, TMP_PROCESSING
+    LOCKS_DIR, DONE_DIR, FAILED_DIR, TMP_PROCESSING,
+    TMP_OUTPUT_ROOT
 )
 from logging_utils import setup_logging, move_logs_to_central_output
 from file_ops import ensure_dirs, get_all_files_sorted, cleanup_working_folders, claim_files
@@ -129,6 +130,17 @@ def main():
             src_path = os.path.join(IN_PROGRESS, rel)
             dst_path = os.path.join(target_dir, rel)
             os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+
+            # If failed, remove any corresponding tmp_output files
+            if not all_success:
+                for crf in CRF_VALUES:
+                    tmp_output_file = os.path.join(TMP_OUTPUT_ROOT.format(crf), rel)
+                    if os.path.exists(tmp_output_file):
+                        try:
+                            os.remove(tmp_output_file)
+                            logging.info(f"Removed temp output file for failed encode: {tmp_output_file}")
+                        except Exception as e:
+                            logging.warning(f"Failed to remove temp output file {tmp_output_file}: {e}")
 
             try:
                 move_with_progress(src_path, dst_path, desc=f"Moving {os.path.basename(rel)}")

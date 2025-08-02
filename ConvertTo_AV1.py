@@ -570,6 +570,18 @@ def main():
             src_path = os.path.join(IN_PROGRESS, rel)
             dst_path = os.path.join(target_dir, rel)
             os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+
+            # If failed, remove any corresponding tmp_output files
+            if not all_success:
+                for crf in CRF_VALUES:
+                    tmp_output_file = os.path.join(TMP_OUTPUT_ROOT.format(crf), rel)
+                    if os.path.exists(tmp_output_file):
+                        try:
+                            os.remove(tmp_output_file)
+                            logging.info(f"Removed temp output file for failed encode: {tmp_output_file}")
+                        except Exception as e:
+                            logging.warning(f"Failed to remove temp output file {tmp_output_file}: {e}")
+
             try:
                 move_with_progress(src_path, dst_path, desc=f"Moving {os.path.basename(rel)}")
                 logging.debug(f"Moved to {'done' if all_success else 'failed'}: {rel}")
