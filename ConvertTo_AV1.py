@@ -396,8 +396,8 @@ def encode_file(src_file, rel_path, crf, bytes_encoded):
     elapsed = time.time() - start_time
     return [src_file, crf, "success", f"{os.path.basename(src_file)} in {format_elapsed(elapsed)}"]
 
-def update_size_pbar(pbar, shared_val, total_bytes):
-    while True:
+def update_size_pbar(pbar, shared_val, total_bytes, stop_event):
+    while not stop_event.is_set():
         current = shared_val.value
         delta = current - pbar.n
         if delta > 0:
@@ -502,8 +502,9 @@ def main():
         manager = Manager()
         shared_bytes = manager.Value('i', 0)
 
-        size_pbar = tqdm(total=total_bytes, unit='B', unit_scale=True, desc=f"Total Progress", position=0)
-        pbar_thread = threading.Thread(target=update_size_pbar, args=(size_pbar, shared_bytes, total_bytes))
+        stop_event = threading.Event()
+        size_pbar = tqdm(total=total_bytes, unit='B', unit_scale=True, desc="Total Progress", position=0)
+        pbar_thread = threading.Thread(target=update_size_pbar, args=(size_pbar, shared_bytes, total_bytes, stop_event))
         pbar_thread.start()
 
         results = []
@@ -526,6 +527,9 @@ def main():
         size_pbar.n = total_bytes
         size_pbar.refresh()
         size_pbar.close()
+
+        shared_bytes.value = total_bytes
+        # stop_event.set()  # Tells the thread to stop
         pbar_thread.join()
 
         # Determine which files succeeded entirely
