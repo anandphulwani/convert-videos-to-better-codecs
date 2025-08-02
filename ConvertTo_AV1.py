@@ -367,7 +367,7 @@ def encode_file(src_file, rel_path, crf, bytes_encoded):
 
     process = subprocess.Popen(cmd,
                             stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL,
+                            stderr=subprocess.PIPE,
                             text=True,
                             bufsize=1)
 
@@ -388,12 +388,29 @@ def encode_file(src_file, rel_path, crf, bytes_encoded):
                         last_progress = current_progress
                 pbar.update(int(round(delta)))
 
-    # Wait for process to finish and get proper return code
-    process.wait()
+    stdout, stderr = process.communicate()
 
     if process.returncode != 0 or not os.path.exists(out_file):
+        logging.error(f"{'=' * 29}  START  {'=' * 29}")
         logging.error(f"FFmpeg failed for {rel_path} [CRF {crf}]")
-        return [src_file, crf, "failed", f"FFmpeg failed for {rel_path}"]
+        logging.error(stdout)
+        logging.error("-" * 60)
+        logging.error(stderr)
+        logging.error(f"{'=' * 30}  END  {'=' * 30}")
+
+        # Print partial stderr to console
+        stderr_lines = stderr.strip().splitlines()
+        snippet = stderr_lines[:10]  # Show first 10 lines
+        print(f"\n{'=' * 29}  START  {'=' * 29}")
+        print(f"FFmpeg error for {rel_path} [CRF {crf}]")
+        print("-" * 60)
+        for line in snippet:
+            print(line)
+        if len(stderr_lines) > 10:
+            print("... (truncated)")
+        print(f"{'=' * 30}  END  {'=' * 30}\n")
+        
+        return [src_file, crf, "failed", f"FFmpeg failed for {rel_path} (see log)"]
 
     move_with_progress(out_file, final_dst, desc=f"Moving {os.path.basename(out_file)}")
     elapsed = time.time() - start_time
