@@ -496,7 +496,18 @@ def main():
 
         save_logs_to_central_output()
         logging.info(f"{MACHINE_ID} finished processing batch; looping back to check for more jobs.")
-        time.sleep(300)
+        is_keyboard_interrupt = False
+        try:
+            sleep_time = 300  # total seconds
+            for _ in tqdm(range(sleep_time), desc="Sleeping", unit="s"):
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\nInterrupted by user. Exiting cleanly.")
+            is_keyboard_interrupt = True
+        finally:
+            tqdm.write("Done or interrupted. Cleaning up...")
+            if is_keyboard_interrupt:
+                break
 
 if __name__ == "__main__":
     main()
