@@ -1,0 +1,55 @@
+import time
+from tqdm import tqdm
+import os
+
+from config import TO_ASSIGN, CRF_VALUES, MACHINE_ID
+from helpers.logging_utils import setup_logging, log
+from clazz.JobManager import JobManager
+from includes.ffmpeg import ffmpeg_get_duration
+from includes.cleanup_working_folders import cleanup_working_folders
+from includes.move_logs_to_central_output import move_logs_to_central_output
+
+# === Main ===
+def main():
+    setup_logging()
+    # ensure_dirs()
+    log(f"Starting AV1 job processor on {MACHINE_ID}")
+
+    job_manager = JobManager()
+    job_manager.start()
+
+    total_seconds = 0
+    for root, _, files in os.walk(TO_ASSIGN):
+        for file in files:
+            if file.lower().endswith(".mp4"):
+                full_path = os.path.join(root, file)
+                duration = ffmpeg_get_duration(full_path)
+                if duration:
+                    total_seconds += duration * len(CRF_VALUES)
+
+    size_pbar = tqdm(total=total_seconds, unit='s', desc="Total Progress", smoothing=1, unit_scale=False, unit_divisor=1)
+
+    try:
+        while True:
+            current_sec = job_manager.video_seconds_encoded.value
+            size_pbar.update(current_sec - size_pbar.n)
+
+            if job_manager.is_done():
+                log("All tasks processed. Exiting main loop.")
+                break
+
+            time.sleep(5)
+
+    except KeyboardInterrupt:
+        log("Interrupted.", level="warning")
+    finally:
+        job_manager.shutdown()
+        size_pbar.close()
+        log("Shutdown complete.")
+        cleanup_working_folders()
+        move_logs_to_central_output()
+        tqdm.write("Clean up complete.")
+        print("Exiting main program.")
+
+if __name__ == '__main__':
+    main()
