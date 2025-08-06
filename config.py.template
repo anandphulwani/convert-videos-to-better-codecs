@@ -1,0 +1,50 @@
+import os
+import argparse
+import sys
+import logging
+
+from helpers.generate_machine_id import generate_machine_id
+
+# CLI argument parsing
+parser = argparse.ArgumentParser(description="Distributed AV1 encoding job processor")
+parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+parser.add_argument("--throttle", action="store_true", help="Enable CPU usage throttling")
+args = parser.parse_args()
+
+# Configuration
+MACHINE_ID = os.getenv("MACHINE_ID", generate_machine_id())
+
+if not MACHINE_ID.strip():
+    logging.critical("MACHINE_ID is empty. Exiting.")
+    sys.exit(1)
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# --- Config ---
+REMOTE_ROOT = '/mnt/AAA.BBB.CCC.DDD_remote/Source_Videos/'
+JOBS_DIR = os.path.join(REMOTE_ROOT, 'jobs')
+LOCKS_DIR = os.path.join(REMOTE_ROOT, 'locks')
+TO_ASSIGN = os.path.join(JOBS_DIR, 'to_assign')
+IN_PROGRESS = os.path.join(JOBS_DIR, 'in_progress', MACHINE_ID)
+DONE_DIR = os.path.join(JOBS_DIR, 'done')
+FAILED_DIR = os.path.join(JOBS_DIR, 'failed')
+LOGS_DIR = os.path.join(JOBS_DIR, 'logs', MACHINE_ID)
+
+
+TMP_ROOT_PATH = os.path.join(SCRIPT_DIR, 'data')
+TMP_INPUT = os.path.join(TMP_ROOT_PATH, 'tmp_input')
+TMP_PROCESSING = os.path.join(TMP_ROOT_PATH, 'tmp_processing', 'av1_crf{}')
+TMP_OUTPUT_ROOT = os.path.join(TMP_ROOT_PATH, 'tmp_output', 'av1_crf{}')
+TMP_FAILED_ROOT = os.path.join(TMP_ROOT_PATH, 'tmp_failed', 'av1_crf{}')
+TMP_SKIPPED_ROOT = os.path.join(TMP_ROOT_PATH, 'tmp_skipped', 'av1_crf{}')
+
+
+FINAL_OUTPUT_ROOT = '/mnt/AAA.BBB.CCC.DDD_remote/Source_Videos_AV1_crf{}'
+
+CRF_VALUES = [24, 60]
+MAX_WORKERS = 6
+CHUNK_SIZE = 0.1 * 1024 * 1024 * 1024
+
+ALL_ROOTS = [REMOTE_ROOT, TMP_INPUT]
+ALL_ROOTS += [TMP_PROCESSING.format(crf) for crf in CRF_VALUES]
+ALL_ROOTS += [TMP_OUTPUT_ROOT.format(crf) for crf in CRF_VALUES]
