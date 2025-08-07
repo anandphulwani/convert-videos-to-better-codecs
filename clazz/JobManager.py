@@ -49,6 +49,7 @@ class JobManager:
         self.threads = []
 
     def start(self):
+        self._preload_existing_input_chunks() 
         self._start_preloader()
         self._start_workers()
 
@@ -141,6 +142,25 @@ class JobManager:
     def _touch_file(path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         pathlib.Path(path).touch(exist_ok=True)
+
+    def _preload_existing_input_chunks(self):
+        log("Scanning TMP_INPUT for pre-existing chunks...")
+        task_count = 0
+
+        for dirpath, _, filenames in os.walk(self.tmp_input_dir):
+            for filename in filenames:
+                if not filename.lower().endswith(".mp4"):
+                    continue
+
+                src_path = os.path.join(dirpath, filename)
+                rel_path = os.path.relpath(src_path, self.tmp_input_dir)  # e.g. chunk03/A_Small_01.mp4
+
+                for crf in self.crf_values:
+                    log(f"#### src_path:{src_path}, rel_path: {rel_path}, crf: {crf}")
+                    self.task_queue.put(EncodingTask(src_path, rel_path, crf))
+                    task_count += 1
+
+        log(f"Queued {task_count} tasks from existing TMP_INPUT chunk folders.")
 
     def _maybe_cleanup_and_finalize(self, task, paths):
         if not self._all_crf_outputs_exist(task.rel_path):
