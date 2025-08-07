@@ -10,6 +10,7 @@ def claim_files():
     chunk, size = [], 0
     for full_path, rel_path in all_files:
         file_size = os.path.getsize(full_path)
+        log(f"Evaluating file: {rel_path} ({file_size} bytes)", level="debug")
         if size + file_size > CHUNK_SIZE and chunk:
             break
         size += file_size
