@@ -13,8 +13,6 @@ def remove_empty_dirs_in_path(path, roots=ALL_ROOTS):
     if not base:
         log("Provided path does not belong to any known base path.")
         return
-    # else:
-    #     print(f"path: {path}, base: {base}")
 
     while os.path.abspath(path) != os.path.abspath(base):
         if not os.path.isdir(path):
