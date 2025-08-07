@@ -6,7 +6,6 @@ from multiprocessing import Manager
 import time
 from queue import Empty, Queue
 from dataclasses import dataclass
-import time
 
 from config import ( 
     IN_PROGRESS, DONE_DIR, FAILED_DIR, 
@@ -135,11 +134,11 @@ class JobManager:
 
         remove_empty_dirs_in_path(paths["processing"], [os.path.dirname(TMP_PROCESSING)])
 
-    def _delete_src(delete_path):
+    def _delete_src(self, delete_path):
         if delete_path and os.path.exists(delete_path):
             os.remove(delete_path)
 
-    def _touch_file(path):
+    def _touch_file(self, path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         pathlib.Path(path).touch(exist_ok=True)
 
