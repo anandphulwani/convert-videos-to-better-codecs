@@ -91,143 +91,165 @@ class JobManager:
 
             self._increment_jobs()
             try:
-                # result = encode_file(task.src_path, task.rel_path, crf, self.bytes_encoded)
                 result = encode_file(task.src_path, task.rel_path, task.crf, self.bytes_encoded, self.video_seconds_encoded)
-
-                tmp_processing_dir = TMP_PROCESSING.format(task.crf)
-                tmp_output_dir = TMP_OUTPUT_ROOT.format(task.crf)
-                tmp_failed_dir = TMP_FAILED_ROOT.format(task.crf)
-                tmp_skipped_dir = TMP_SKIPPED_ROOT.format(task.crf)
-
-                # final_output_dir = FINAL_OUTPUT_ROOT.format(task.crf)
-                tmp_processing_file = os.path.join(tmp_processing_dir, task.rel_path)
-                tmp_output_file = os.path.join(tmp_output_dir, task.rel_path)
-                tmp_failed_file = os.path.join(tmp_failed_dir, task.rel_path)
-                tmp_skipped_file = os.path.join(tmp_skipped_dir, task.rel_path)
-                # final_output_file = os.path.join(final_output_dir, remove_topmost_dir(task.rel_path))
-
-                with _file_moving_lock:
-                    if result[2] == "failed" or result[2] == "skipped-notsupported":
-                        if os.path.exists(tmp_processing_file):
-                            os.remove(tmp_processing_file)
-                        os.makedirs(os.path.dirname(tmp_failed_file), exist_ok=True)
-                        pathlib.Path(tmp_failed_file).touch(exist_ok=True)
-                    elif result[2] == "skipped-alreadyexists-main":
-                        os.makedirs(os.path.dirname(tmp_skipped_file), exist_ok=True)
-                        pathlib.Path(tmp_skipped_file).touch(exist_ok=True)
-                    elif result[2] == "skipped-alreadyexists-tmp":
-                        pass
-                    elif result[2] == "success":
-                        move_with_progress(tmp_processing_file, tmp_output_file, desc=f"Moving {os.path.basename(tmp_processing_file)}")
-                    else:
-                        log(f"Unknown supported result type", level="error")
-                        return
-                    remove_empty_dirs_in_path(tmp_processing_file, [os.path.dirname(TMP_PROCESSING)])
-
-                    # Check if all CRF outputs exist, and if so, delete source file
-                    all_crf_outputs_exist = True
-                    for crf_check in CRF_VALUES:
-                        output_path = os.path.join(TMP_OUTPUT_ROOT.format(crf_check), task.rel_path)
-                        failed_path = os.path.join(TMP_FAILED_ROOT.format(crf_check), task.rel_path)
-                        skipped_path = os.path.join(TMP_SKIPPED_ROOT.format(crf_check), task.rel_path)
-                        # log(f"output_path: {output_path}, Condition: {os.path.exists(output_path)}")
-                        # log(f"failed_path: {failed_path}, Condition: {os.path.exists(failed_path)}")
-                        # log(f"Group Condition: {not (os.path.exists(output_path) or os.path.exists(failed_path))}")
-                        if not (os.path.exists(output_path) or os.path.exists(failed_path) or os.path.exists(skipped_path)):
-                            # log(f"Setting `all_crf_outputs_exist` to `False`.")
-                            all_crf_outputs_exist = False
-                            break
-
-                    if all_crf_outputs_exist:
-                        try:
-                            # log(f"Removing source path: {task.src_path}")
-                            os.remove(task.src_path)
-                            remove_empty_dirs_in_path(os.path.dirname(task.src_path), [TMP_INPUT])
-                        except Exception as e:
-                            log(f"Failed to delete source file {task.src_path}: {e}", level="error")
-
-                    # Check if `tmp_input\chunkXX` is removed, then we can 
-                    # transfer all items which failed in `tmp_failed\av1_crf{}`, transfer from `IN_PROGRESS` to `FAILED`
-                    # transfer `tmp_output\av1_crf{}` directories to the `FINAL_OUTPUT_ROOT_av1_crf{}`
-                    if not os.path.exists(os.path.join(TMP_INPUT, get_topmost_dir(task.rel_path))):
-                        log(f"{get_topmost_dir(task.rel_path)} folder is removed.")
-
-                        # Removing all skipped files as they are no longer required.
-                        for crf in CRF_VALUES:
-                            skipped_path = os.path.join(TMP_SKIPPED_ROOT.format(crf), get_topmost_dir(task.rel_path))
-                            if os.path.exists(skipped_path):
-                                shutil.rmtree(skipped_path)
-                            remove_empty_dirs_in_path(skipped_path, [os.path.dirname(os.path.dirname(TMP_SKIPPED_ROOT))])
-
-                        log("We are going to process the failure now.")
-                        # transfer all items which failed in `tmp_failed\av1_crf{}`, transfer from `IN_PROGRESS` to `FAILED`
-                        for crf in CRF_VALUES:
-                            failed_root = TMP_FAILED_ROOT.format(crf)
-                            for root, _, files in os.walk(failed_root):
-                                for file in files:
-                                    failed_file_path = os.path.join(root, file)
-
-                                    # Relative path inside crf folder: chunkXX/filename.mp4
-                                    with_chunk_rel_path = os.path.relpath(failed_file_path, failed_root)
-                                    rel_path = remove_topmost_dir(with_chunk_rel_path)
-
-                                    in_progress_path = os.path.join(IN_PROGRESS, rel_path)
-                                    failed_path = os.path.join(FAILED_DIR, rel_path)
-
-                                    # Attempt to move only once, from in_progress to failed_dir
-                                    try:
-                                        if os.path.exists(in_progress_path):
-                                            move_with_progress(in_progress_path, failed_path)
-                                            log(f"Moved failed task from in_progress to failed: {rel_path}")
-                                        else:
-                                            log(f"In-progress file for failed task not found: {in_progress_path}", level="warning")
-                                    except Exception as e:
-                                        log(f"Error moving failed task {rel_path}: {e}", level="error")
-
-                                    # Now, delete this file from all TMP_FAILED_ROOT_crf
-                                    for crf_delete in CRF_VALUES:
-                                        delete_path = os.path.join(TMP_FAILED_ROOT.format(crf_delete), with_chunk_rel_path)
-                                        if os.path.exists(delete_path):
-                                            try:
-                                                os.remove(delete_path)
-                                                log(f"Deleted failed file from tmp_failed (crf={crf_delete}): {delete_path}")
-                                            except Exception as e:
-                                                log(f"Error deleting failed file from tmp_failed (crf={crf_delete}): {e}", level="error")
-                        
-                        # --- Step 1: Collect all file sets per CRF ---
-                        all_crf_file_sets = []
-                        for crf_check in CRF_VALUES:
-                            chunk_crf_path = os.path.join(TMP_OUTPUT_ROOT.format(crf_check), get_topmost_dir(task.rel_path))
-                            if os.path.exists(chunk_crf_path):
-                                crf_files = set()
-                                for dirpath, _, filenames in os.walk(chunk_crf_path):
-                                    for f in filenames:
-                                        rel_path = os.path.relpath(os.path.join(dirpath, f), chunk_crf_path)
-                                        crf_files.add(rel_path)
-                                all_crf_file_sets.append(crf_files)
-
-                        # --- Step 2: Find common files ---
-                        common_files = set.intersection(*all_crf_file_sets) if all_crf_file_sets else set()
-
-                        # --- Step 3: transfer `tmp_output\av1_crf{}` directories to the `FINAL_OUTPUT_ROOT_av1_crf{}`
-                        for crf_check in CRF_VALUES:
-                            chunk_crf_path = os.path.join(TMP_OUTPUT_ROOT.format(crf_check), get_topmost_dir(task.rel_path))
-                            final_output_path = FINAL_OUTPUT_ROOT.format(crf_check)
-                            if os.path.exists(chunk_crf_path):
-                                move_with_progress(chunk_crf_path, final_output_path, True, True)
-
-                        # --- Step 4: Move common files from IN_PROGRESS to DONE ---
-                        for rel_file in common_files:
-                            src_file = os.path.join(IN_PROGRESS, rel_file)
-                            dst_file = os.path.join(DONE_DIR, rel_file)
-                            if os.path.exists(src_file):
-                                move_with_progress(src_file, dst_file)
-                        
-                        move_done_if_all_crf_outputs_exist()
-
-                log(f"[CRF {task.crf}] {result[2].upper()}: {result[3]}")
+                self._handle_encoding_result(task, result)
+            except Exception as e:
+                log(f"Worker loop encountered an error: {e}", level="error")
             finally:
                 self._decrement_jobs()
+
+    def _handle_encoding_result(self, task, result):
+        crf = task.crf
+        paths = self._construct_paths(task)
+        status = result[2]
+
+        with _file_moving_lock:
+            self._process_result_status(status, paths)
+            self._maybe_cleanup_and_finalize(task, paths)
+
+        log(f"[CRF {crf}] {status.upper()}: {result[3]}")
+
+    def _construct_paths(self, task):
+        rel = task.rel_path
+        crf = task.crf
+        return {
+            "processing": os.path.join(TMP_PROCESSING.format(crf), rel),
+            "output": os.path.join(TMP_OUTPUT_ROOT.format(crf), rel),
+            "failed": os.path.join(TMP_FAILED_ROOT.format(crf), rel),
+            "skipped": os.path.join(TMP_SKIPPED_ROOT.format(crf), rel),
+        }
+
+    def _process_result_status(self, status, paths):
+        if status in ("failed", "skipped-notsupported"):
+            self._delete_src(paths["processing"])
+            self._touch_file(paths["failed"])
+        elif status == "skipped-alreadyexists-main":
+            self._touch_file(paths["skipped"])
+        elif status == "skipped-alreadyexists-tmp":
+            pass
+        elif status == "success":
+            move_with_progress(paths["processing"], paths["output"], desc=f"Moving {os.path.basename(paths['processing'])}")
+        else:
+            log(f"Unknown supported result type: {status}", level="error")
+
+        remove_empty_dirs_in_path(paths["processing"], [os.path.dirname(TMP_PROCESSING)])
+
+    def _delete_src(delete_path):
+        if delete_path and os.path.exists(delete_path):
+            os.remove(delete_path)
+
+    def _touch_file(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        pathlib.Path(path).touch(exist_ok=True)
+
+    def _maybe_cleanup_and_finalize(self, task, paths):
+        if not self._all_crf_outputs_exist(task.rel_path):
+            return
+
+        self._safe_remove(task.src_path)
+        remove_empty_dirs_in_path(os.path.dirname(task.src_path), [TMP_INPUT])
+
+        chunk_folder = get_topmost_dir(task.rel_path)
+        chunk_path = os.path.join(TMP_INPUT, chunk_folder)
+
+        if not os.path.exists(chunk_path):
+            self._finalize_chunk(chunk_folder)
+
+    def _all_crf_outputs_exist(self, rel_path):
+        for crf in CRF_VALUES:
+            paths = [
+                os.path.join(TMP_OUTPUT_ROOT.format(crf), rel_path),
+                os.path.join(TMP_FAILED_ROOT.format(crf), rel_path),
+                os.path.join(TMP_SKIPPED_ROOT.format(crf), rel_path),
+            ]
+            if not any(os.path.exists(p) for p in paths):
+                return False
+        return True
+
+    def _safe_remove(self, path):
+        try:
+            os.remove(path)
+        except Exception as e:
+            log(f"Failed to delete source file {path}: {e}", level="error")
+
+    def _finalize_chunk(self, chunk_folder):
+        log(f"{chunk_folder} folder is removed.")
+        self._remove_skipped_files(chunk_folder)
+        self._transfer_failed_tasks(chunk_folder)
+        self._move_outputs_and_mark_done(chunk_folder)
+
+    def _remove_skipped_files(self, chunk_folder):
+        for crf in CRF_VALUES:
+            path = os.path.join(TMP_SKIPPED_ROOT.format(crf), chunk_folder)
+            if os.path.exists(path):
+                shutil.rmtree(path)
+            remove_empty_dirs_in_path(path, [os.path.dirname(os.path.dirname(TMP_SKIPPED_ROOT))])
+
+    def _transfer_failed_tasks(self, chunk_folder):
+        # transfer all items which failed in `tmp_failed\av1_crf{}`, transfer from `IN_PROGRESS` to `FAILED`
+        for crf in CRF_VALUES:
+            failed_root = TMP_FAILED_ROOT.format(crf)
+            for root, _, files in os.walk(failed_root):
+                for file in files:
+                    failed_file_path = os.path.join(root, file)
+
+                    # Relative path inside crf folder: chunkXX/filename.mp4
+                    with_chunk_rel_path = os.path.relpath(failed_file_path, failed_root)
+                    rel_path = remove_topmost_dir(with_chunk_rel_path)
+                    in_progress_path = os.path.join(IN_PROGRESS, rel_path)
+                    failed_path = os.path.join(FAILED_DIR, rel_path)
+
+                    # Attempt to move only once, from in_progress to failed_dir
+                    try:
+                        if os.path.exists(in_progress_path):
+                            move_with_progress(in_progress_path, failed_path)
+                            log(f"Moved failed task from in_progress to failed: {rel_path}")
+                        else:
+                            log(f"In-progress file for failed task not found: {in_progress_path}", level="warning")
+                    except Exception as e:
+                        log(f"Error moving failed task {rel_path}: {e}", level="error")
+
+                    # Now, delete this file from all TMP_FAILED_ROOT_crf
+                    for crf_failed in CRF_VALUES:
+                        delete_path = os.path.join(TMP_FAILED_ROOT.format(crf_failed), with_chunk_rel_path)
+                        if os.path.exists(delete_path):
+                            try:
+                                os.remove(delete_path)
+                                log(f"Deleted failed file from tmp_failed (crf={crf_failed}): {delete_path}")
+                            except Exception as e:
+                                log(f"Error deleting failed file from tmp_failed (crf={crf_failed}): {e}", level="error")
+
+    def _move_outputs_and_mark_done(self, chunk_folder):
+        # --- Step 1: Collect all file sets per CRF ---
+        all_crf_file_sets = []
+        for crf in CRF_VALUES:
+            chunk_crf_path = os.path.join(TMP_OUTPUT_ROOT.format(crf), chunk_folder)
+            if os.path.exists(chunk_crf_path):
+                crf_files = set()
+                for dirpath, _, filenames in os.walk(chunk_crf_path):
+                    for f in filenames:
+                        rel_path = os.path.relpath(os.path.join(dirpath, f), chunk_crf_path)
+                        crf_files.add(rel_path)
+                all_crf_file_sets.append(crf_files)
+
+        # --- Step 2: Find common files ---
+        common_files = set.intersection(*all_crf_file_sets) if all_crf_file_sets else set()
+
+        # --- Step 3: transfer `tmp_output\av1_crf{}` directories to the `FINAL_OUTPUT_ROOT_av1_crf{}`
+        for crf in CRF_VALUES:
+            chunk_crf_path = os.path.join(TMP_OUTPUT_ROOT.format(crf), chunk_folder)
+            final_output_path = FINAL_OUTPUT_ROOT.format(crf)
+            if os.path.exists(chunk_crf_path):
+                move_with_progress(chunk_crf_path, final_output_path, True, True)
+
+        # --- Step 4: Move common files from IN_PROGRESS to DONE ---
+        for rel_file in common_files:
+            src_file = os.path.join(IN_PROGRESS, rel_file)
+            dst_file = os.path.join(DONE_DIR, rel_file)
+            if os.path.exists(src_file):
+                move_with_progress(src_file, dst_file)
+
+        move_done_if_all_crf_outputs_exist()
 
     def _increment_jobs(self):
         with self.active_jobs_lock:
