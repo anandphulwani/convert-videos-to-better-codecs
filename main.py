@@ -12,7 +12,7 @@ from includes.move_logs_to_central_output import move_logs_to_central_output
 # === Main ===
 def main():
     setup_logging()
-    # ensure_dirs()
+    cleanup_working_folders()
     log(f"Starting AV1 job processor on {MACHINE_ID}")
 
     job_manager = JobManager()
