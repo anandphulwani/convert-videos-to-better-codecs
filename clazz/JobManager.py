@@ -44,7 +44,6 @@ class JobManager:
         self.light_threads = []
         self.processes = [] 
         self.process_registry = self.manager.dict()  # pid -> subprocess.Process
-
         self.active_jobs_lock = Lock()
         self.stop_event = Event()
         self.file_moving_lock = RLock()  # make it an instance var, not a module global
@@ -63,7 +62,6 @@ class JobManager:
 
     def _start_workers(self):
         for _ in range(self.max_workers):
-            log("Starting a workers.")
             p = Process(target=self._worker_loop, daemon=True)
             p.start()
             self.processes.append(p)
@@ -289,6 +287,19 @@ class JobManager:
     def _decrement_jobs(self):
         with self.active_jobs_lock:
             self.active_jobs -= 1
+    
+    def _clear_tmp_processing(self):
+        # Clean up TMP_PROCESSING folder
+        log("Clearing TMP_PROCESSING directory...")
+        for crf in self.crf_values:
+            tmp_processing_path = TMP_PROCESSING.format(crf)
+            for dirpath, _, filenames in os.walk(tmp_processing_path):
+                for filename in filenames:
+                    file_path = os.path.join(dirpath, filename)
+                    try:
+                        os.remove(file_path)
+                    except Exception as e:
+                        log(f"Failed to delete {file_path}: {e}", level="error")
 
     def shutdown(self):
         self.stop_event.set()
