@@ -1,10 +1,12 @@
 import os
 import pathlib
+import platform
+import signal
 import shutil
 import threading
-from multiprocessing import Manager
 import time
-from queue import Empty, Queue
+from multiprocessing import Manager, Process, Queue, Lock, RLock, Event
+from multiprocessing.queues import Empty 
 from dataclasses import dataclass
 
 from config import ( 
@@ -28,8 +30,6 @@ class EncodingTask:
     rel_path: str
     crf: int
 
-_file_moving_lock = threading.RLock()
-
 class JobManager:
     def __init__(self):
         self.preload_done = threading.Event()
@@ -40,12 +40,16 @@ class JobManager:
         self.in_progress_dir = IN_PROGRESS
         self.task_queue = Queue()
         self.active_jobs = 0
-        self.active_jobs_lock = threading.Lock()
-        self.stop_event = threading.Event()
         self.manager = Manager()
-        self.bytes_encoded = self.manager.Value('i', 0)
-        self.video_seconds_encoded = self.manager.Value('i', 0)
-        self.threads = []
+        self.light_threads = []
+        self.processes = [] 
+        self.process_registry = self.manager.dict()  # pid -> subprocess.Process
+
+        self.active_jobs_lock = Lock()
+        self.stop_event = Event()
+        self.file_moving_lock = RLock()  # make it an instance var, not a module global
+        self.bytes_encoded = self.manager.Value('q', 0)
+        self.video_seconds_encoded = self.manager.Value('q', 0)
 
     def start(self):
         self._preload_existing_input_chunks() 
@@ -55,13 +59,14 @@ class JobManager:
     def _start_preloader(self):
         t = threading.Thread(target=self._preload_loop, daemon=True)
         t.start()
-        self.threads.append(t)
+        self.light_threads.append(t)
 
     def _start_workers(self):
         for _ in range(self.max_workers):
-            t = threading.Thread(target=self._worker_loop, daemon=True)
-            t.start()
-            self.threads.append(t)
+            log("Starting a workers.")
+            p = Process(target=self._worker_loop, daemon=True)
+            p.start()
+            self.processes.append(p)
 
     def _preload_loop(self):
         log("Preloader started")
@@ -91,7 +96,14 @@ class JobManager:
 
             self._increment_jobs()
             try:
-                result = encode_file(task.src_path, task.rel_path, task.crf, self.bytes_encoded, self.video_seconds_encoded)
+                result = encode_file(
+                    task.src_path,
+                    task.rel_path,
+                    task.crf,
+                    self.bytes_encoded,
+                    self.video_seconds_encoded,
+                    process_registry=self.process_registry
+                )
                 self._handle_encoding_result(task, result)
             except Exception as e:
                 log(f"Worker loop encountered an error: {e}", level="error")
@@ -103,7 +115,7 @@ class JobManager:
         paths = self._construct_paths(task)
         status = result[2]
 
-        with _file_moving_lock:
+        with self._file_moving_lock:
             self._process_result_status(status, paths)
             self._maybe_cleanup_and_finalize(task, paths)
 
@@ -287,5 +299,5 @@ class JobManager:
         return self.bytes_encoded.value
 
     def is_done(self):
-        return self.preload_done.is_set() and self.task_queue.empty() and self.active_jobs == 0
-
+        all_workers_stopped = all(not p.is_alive() for p in self.processes)
+        return self.preload_done.is_set() and self.task_queue.empty() and self.active_jobs == 0 and all_workers_stopped

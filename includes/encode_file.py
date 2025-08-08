@@ -48,8 +48,7 @@ def encode_file(src_file, rel_path, crf, bytes_encoded, video_seconds_encoded, p
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            bufsize=1,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+            bufsize=1
         )
     else:
         # Create new process group on Unix/Linux
@@ -58,8 +57,7 @@ def encode_file(src_file, rel_path, crf, bytes_encoded, video_seconds_encoded, p
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            bufsize=1,
-            preexec_fn=os.setsid
+            bufsize=1
         )
 
     # Register process in shared dict
