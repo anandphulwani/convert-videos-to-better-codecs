@@ -1,9 +1,10 @@
 import os
 import shutil
-import threading
 from tqdm import tqdm
 
-_progress_lock = threading.RLock()
+from multiprocessing import RLock
+
+_progress_lock = RLock()
 
 def _calculate_total_size(path):
     """Return the total size of a file or all files within a directory."""
