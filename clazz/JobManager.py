@@ -303,8 +303,34 @@ class JobManager:
 
     def shutdown(self):
         self.stop_event.set()
-        for t in self.threads:
+
+        for pid in list(self.process_registry.values()):
+            try:
+                log(f"Process id being killed now is: {pid}")
+                os.kill(pid, signal.SIGKILL)
+                self.process_registry.pop(pid, None)
+            except Exception as e:
+                log(f"Failed to kill process {pid}: {e}", level="warning")
+
+        # Kill all workers
+        for p in self.processes:
+            if p.is_alive():
+                p.terminate()
+        self.processes.clear()
+
+        # Stop threads
+        for t in self.light_threads:
             t.join(timeout=5)
+        self.light_threads.clear()
+
+        # Clear TMP_PROCESSING
+        self._clear_tmp_processing()
+
+        # Close Manager
+        try:
+            self.manager.shutdown()
+        except Exception:
+            pass
 
     def get_encoded_bytes(self):
         return self.bytes_encoded.value
