@@ -30,14 +30,27 @@ def main():
     size_pbar = tqdm(total=total_seconds, unit='s', desc="Total Progress", smoothing=1, unit_scale=False, unit_divisor=1)
 
     try:
+        start_time = time.time()
         while True:
             current_sec = job_manager.video_seconds_encoded.value
             size_pbar.update(current_sec - size_pbar.n)
+            if time.time() - start_time >= 120:
+                break
+            time.sleep(5)
 
+        job_manager.shutdown()
+        log('Pausing now.')
+        time.sleep(40)
+        log('Resuming now.')
+        job_manager = JobManager()
+        job_manager.start()
+
+        while True:
+            current_sec = job_manager.video_seconds_encoded.value
+            size_pbar.update(current_sec - size_pbar.n)
             if job_manager.is_done():
                 log("All tasks processed. Exiting main loop.")
                 break
-
             time.sleep(5)
 
     except KeyboardInterrupt:
@@ -52,4 +65,6 @@ def main():
         print("Exiting main program.")
 
 if __name__ == '__main__':
+    import multiprocessing as mp
+    tqdm.set_lock(mp.RLock())
     main()

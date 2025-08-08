@@ -1,12 +1,11 @@
 import os
 import pathlib
-import platform
 import signal
 import shutil
 import threading
 import time
-from multiprocessing import Manager, Process, Queue, Lock, RLock, Event
-from multiprocessing.queues import Empty 
+from multiprocessing import Manager, Process, JoinableQueue, RLock, Event, Value
+from queue import Empty
 from dataclasses import dataclass
 
 from config import ( 
@@ -38,21 +37,30 @@ class JobManager:
         self.chunk_size = CHUNK_SIZE
         self.tmp_input_dir = TMP_INPUT
         self.in_progress_dir = IN_PROGRESS
-        self.task_queue = Queue()
-        self.active_jobs = 0
+
+        # IMPORTANT: JoinableQueue for proper completion semantics
+        self.task_queue = JoinableQueue()
+
         self.manager = Manager()
         self.light_threads = []
         self.processes = [] 
-        self.process_registry = self.manager.dict()  # pid -> subprocess.Process
-        self.active_jobs_lock = Lock()
+        self.process_registry = self.manager.dict()  # pid -> subprocess pid
+        self.active_jobs = Value('i', 0)
+
+        # Deterministic task accounting (don’t trust Queue.empty())
+        self.total_tasks = Value('i', 0)
+        self.completed_tasks = Value('i', 0)
+
         self.stop_event = Event()
-        self.file_moving_lock = RLock()  # make it an instance var, not a module global
+        self.file_moving_lock = RLock()
         self.bytes_encoded = self.manager.Value('q', 0)
         self.video_seconds_encoded = self.manager.Value('q', 0)
 
     def start(self):
-        self._preload_existing_input_chunks() 
+        # Queue any pre-existing inputs first so workers won’t starve on startup.
+        self._preload_existing_input_chunks()
         self._start_preloader()
+        # Small head-start for the preloader is fine but not required.
         self._start_workers()
 
     def _start_preloader(self):
@@ -61,6 +69,7 @@ class JobManager:
         self.light_threads.append(t)
 
     def _start_workers(self):
+        # log("Starting workers...")
         for _ in range(self.max_workers):
             p = Process(target=self._worker_loop, daemon=True)
             p.start()
@@ -69,9 +78,8 @@ class JobManager:
     def _preload_loop(self):
         log("Preloader started")
         while (not self.stop_event.is_set()) and (not self.preload_done.is_set()):
-            with self.active_jobs_lock:
-                log(f"Active jobs: {self.active_jobs}, Max workers: {self.max_workers}", level="debug")
-                if self.active_jobs <= max(1, self.max_workers // 2):
+            with self.active_jobs.get_lock():
+                if self.active_jobs.value <= max(1, self.max_workers // 2):
                     chunk = claim_files()
                     if chunk:
                         for src, dst, rel in chunk:
@@ -79,18 +87,32 @@ class JobManager:
                             copy_with_progress(src, local_dst, desc=f"Preloading {os.path.basename(rel)}")
                             move_with_progress(src, dst, desc=f"Preloading {os.path.basename(rel)}")
                             for crf in self.crf_values:
-                                self.task_queue.put(EncodingTask(local_dst, rel, crf))
+                                self._enqueue_task(EncodingTask(local_dst, rel, crf))
                     else:
                         log("No more files to claim. Marking preload as done.")
                         self.preload_done.set()
-            time.sleep(5)
+                        # Signal workers to exit when queue drains
+                        for _ in range(self.max_workers):
+                            self.task_queue.put(None)
+                        break
+            time.sleep(0.5)
+
+    def _enqueue_task(self, task: EncodingTask):
+        self.task_queue.put(task)
+        with self.total_tasks.get_lock():
+            self.total_tasks.value += 1
 
     def _worker_loop(self):
         while not self.stop_event.is_set():
             try:
-                task = self.task_queue.get(timeout=5)
+                task = self.task_queue.get(timeout=1)
             except Empty:
                 continue
+
+            # Sentinel -> clean exit
+            if task is None:
+                self.task_queue.task_done()
+                break
 
             self._increment_jobs()
             try:
@@ -106,14 +128,17 @@ class JobManager:
             except Exception as e:
                 log(f"Worker loop encountered an error: {e}", level="error")
             finally:
+                with self.completed_tasks.get_lock():
+                    self.completed_tasks.value += 1
                 self._decrement_jobs()
+                self.task_queue.task_done()
 
     def _handle_encoding_result(self, task, result):
         crf = task.crf
         paths = self._construct_paths(task)
         status = result[2]
 
-        with self._file_moving_lock:
+        with self.file_moving_lock:
             self._process_result_status(status, paths)
             self._maybe_cleanup_and_finalize(task, paths)
 
@@ -162,11 +187,10 @@ class JobManager:
                     continue
 
                 src_path = os.path.join(dirpath, filename)
-                rel_path = os.path.relpath(src_path, self.tmp_input_dir)  # e.g. chunk03/A_Small_01.mp4
+                rel_path = os.path.relpath(src_path, self.tmp_input_dir)
 
                 for crf in self.crf_values:
-                    log(f"#### src_path:{src_path}, rel_path: {rel_path}, crf: {crf}")
-                    self.task_queue.put(EncodingTask(src_path, rel_path, crf))
+                    self._enqueue_task(EncodingTask(src_path, rel_path, crf))
                     task_count += 1
 
         log(f"Queued {task_count} tasks from existing TMP_INPUT chunk folders.")
@@ -215,20 +239,16 @@ class JobManager:
             remove_empty_dirs_in_path(path, [os.path.dirname(os.path.dirname(TMP_SKIPPED_ROOT))])
 
     def _transfer_failed_tasks(self, chunk_folder):
-        # transfer all items which failed in `tmp_failed\av1_crf{}`, transfer from `IN_PROGRESS` to `FAILED`
         for crf in CRF_VALUES:
             failed_root = TMP_FAILED_ROOT.format(crf)
             for root, _, files in os.walk(failed_root):
                 for file in files:
                     failed_file_path = os.path.join(root, file)
-
-                    # Relative path inside crf folder: chunkXX/filename.mp4
                     with_chunk_rel_path = os.path.relpath(failed_file_path, failed_root)
                     rel_path = remove_topmost_dir(with_chunk_rel_path)
                     in_progress_path = os.path.join(IN_PROGRESS, rel_path)
                     failed_path = os.path.join(FAILED_DIR, rel_path)
 
-                    # Attempt to move only once, from in_progress to failed_dir
                     try:
                         if os.path.exists(in_progress_path):
                             move_with_progress(in_progress_path, failed_path)
@@ -238,7 +258,6 @@ class JobManager:
                     except Exception as e:
                         log(f"Error moving failed task {rel_path}: {e}", level="error")
 
-                    # Now, delete this file from all TMP_FAILED_ROOT_crf
                     for crf_failed in CRF_VALUES:
                         delete_path = os.path.join(TMP_FAILED_ROOT.format(crf_failed), with_chunk_rel_path)
                         if os.path.exists(delete_path):
@@ -249,7 +268,6 @@ class JobManager:
                                 log(f"Error deleting failed file from tmp_failed (crf={crf_failed}): {e}", level="error")
 
     def _move_outputs_and_mark_done(self, chunk_folder):
-        # --- Step 1: Collect all file sets per CRF ---
         all_crf_file_sets = []
         for crf in CRF_VALUES:
             chunk_crf_path = os.path.join(TMP_OUTPUT_ROOT.format(crf), chunk_folder)
@@ -261,17 +279,14 @@ class JobManager:
                         crf_files.add(rel_path)
                 all_crf_file_sets.append(crf_files)
 
-        # --- Step 2: Find common files ---
         common_files = set.intersection(*all_crf_file_sets) if all_crf_file_sets else set()
 
-        # --- Step 3: transfer `tmp_output\av1_crf{}` directories to the `FINAL_OUTPUT_ROOT_av1_crf{}`
         for crf in CRF_VALUES:
             chunk_crf_path = os.path.join(TMP_OUTPUT_ROOT.format(crf), chunk_folder)
             final_output_path = FINAL_OUTPUT_ROOT.format(crf)
             if os.path.exists(chunk_crf_path):
                 move_with_progress(chunk_crf_path, final_output_path, True, True)
 
-        # --- Step 4: Move common files from IN_PROGRESS to DONE ---
         for rel_file in common_files:
             src_file = os.path.join(IN_PROGRESS, rel_file)
             dst_file = os.path.join(DONE_DIR, rel_file)
@@ -281,15 +296,14 @@ class JobManager:
         move_done_if_all_crf_outputs_exist()
 
     def _increment_jobs(self):
-        with self.active_jobs_lock:
-            self.active_jobs += 1
+        with self.active_jobs.get_lock():
+            self.active_jobs.value += 1
 
     def _decrement_jobs(self):
-        with self.active_jobs_lock:
-            self.active_jobs -= 1
-    
+        with self.active_jobs.get_lock():
+            self.active_jobs.value -= 1
+
     def _clear_tmp_processing(self):
-        # Clean up TMP_PROCESSING folder
         log("Clearing TMP_PROCESSING directory...")
         for crf in self.crf_values:
             tmp_processing_path = TMP_PROCESSING.format(crf)
@@ -302,31 +316,39 @@ class JobManager:
                         log(f"Failed to delete {file_path}: {e}", level="error")
 
     def shutdown(self):
+        # Request stop, and make sure workers can unblock from .get()
         self.stop_event.set()
+        try:
+            # Push sentinels to unblock any idle workers
+            for _ in range(self.max_workers):
+                self.task_queue.put_nowait(None)
+        except Exception:
+            pass
 
+        # Kill any external encoder processes we’ve tracked
         for pid in list(self.process_registry.values()):
             try:
-                log(f"Process id being killed now is: {pid}")
+                # log(f"Killing encoder process id: {pid}")
                 os.kill(pid, signal.SIGKILL)
                 self.process_registry.pop(pid, None)
             except Exception as e:
                 log(f"Failed to kill process {pid}: {e}", level="warning")
 
-        # Kill all workers
+        # Give workers a moment to exit gracefully
+        # deadline = time.time() + 5
         for p in self.processes:
+            # while p.is_alive() and time.time() < deadline:
+            #     time.sleep(0.1)
             if p.is_alive():
                 p.terminate()
         self.processes.clear()
 
-        # Stop threads
         for t in self.light_threads:
-            t.join(timeout=5)
+            t.join(timeout=2)
         self.light_threads.clear()
 
-        # Clear TMP_PROCESSING
         self._clear_tmp_processing()
 
-        # Close Manager
         try:
             self.manager.shutdown()
         except Exception:
@@ -336,5 +358,10 @@ class JobManager:
         return self.bytes_encoded.value
 
     def is_done(self):
-        all_workers_stopped = all(not p.is_alive() for p in self.processes)
-        return self.preload_done.is_set() and self.task_queue.empty() and self.active_jobs == 0 and all_workers_stopped
+        # Deterministic: all tasks that were enqueued have completed,
+        # and the preloader has finished creating tasks.
+        return (
+            self.preload_done.is_set() and
+            self.completed_tasks.value >= self.total_tasks.value and
+            self.active_jobs.value == 0
+        )
