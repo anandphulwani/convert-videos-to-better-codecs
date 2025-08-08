@@ -62,7 +62,7 @@ def encode_file(src_file, rel_path, crf, bytes_encoded, video_seconds_encoded, p
 
     # Register process in shared dict
     if process_registry is not None:
-        process_registry[os.getpid()] = process
+        process_registry[os.getpid()] = process.pid
 
     # parse progress from stdout:
     last_progress = 0
