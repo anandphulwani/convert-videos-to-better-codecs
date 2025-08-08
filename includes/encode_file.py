@@ -1,5 +1,7 @@
 import subprocess
 import os
+import platform
+import subprocess
 import time
 from tqdm import tqdm
 
@@ -9,7 +11,7 @@ from helpers.remove_topmost_dir import remove_topmost_dir
 from config import TMP_OUTPUT_ROOT, FINAL_OUTPUT_ROOT, TMP_PROCESSING
 from helpers.logging_utils import log
 
-def encode_file(src_file, rel_path, crf, bytes_encoded, video_seconds_encoded):
+def encode_file(src_file, rel_path, crf, bytes_encoded, video_seconds_encoded, process_registry=None):
     tmp_processing_dir = TMP_PROCESSING.format(crf)
     tmp_output_dir = TMP_OUTPUT_ROOT.format(crf)
     final_output_dir = FINAL_OUTPUT_ROOT.format(crf)
@@ -38,12 +40,31 @@ def encode_file(src_file, rel_path, crf, bytes_encoded, video_seconds_encoded):
     pbar = tqdm(total=duration or 100, desc=f"CRF{crf}: {os.path.basename(src_file)}", unit='s', leave=False)
 
     os.makedirs(os.path.dirname(tmp_processing_file), exist_ok=True)
+    
+    if platform.system() == "Windows":
+        # Create new process group on Windows
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+        )
+    else:
+        # Create new process group on Unix/Linux
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            preexec_fn=os.setsid
+        )
 
-    process = subprocess.Popen(cmd,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            text=True,
-                            bufsize=1)
+    # Register process in shared dict
+    if process_registry is not None:
+        process_registry[os.getpid()] = process
 
     # parse progress from stdout:
     last_progress = 0
@@ -85,7 +106,14 @@ def encode_file(src_file, rel_path, crf, bytes_encoded, video_seconds_encoded):
             print("... (truncated)")
         print(f"{'=' * 30}  END  {'=' * 30}\n")
         
+        if process_registry is not None:
+            process_registry.pop(os.getpid(), None)
+
         return [src_file, crf, "failed", f"FFmpeg failed for {rel_path} (see log)"]
 
     elapsed = time.time() - start_time
+
+    if process_registry is not None:
+        process_registry.pop(os.getpid(), None)
+    
     return [src_file, crf, "success", f"{os.path.basename(src_file)} in {format_elapsed(elapsed)}"]
