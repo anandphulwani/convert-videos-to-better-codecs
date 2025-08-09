@@ -44,7 +44,7 @@ def main():
                 if duration:
                     total_seconds += duration * len(CRF_VALUES)
 
-    size_pbar = tqdm(total=total_seconds, unit='s', desc="Total Progress", smoothing=1, unit_scale=False, unit_divisor=1)
+    size_pbar = tqdm(total=total_seconds, unit='s', desc="Total Progress", smoothing=1, unit_scale=False, unit_divisor=1, position=0)
 
     try:
         start_time = time.time()
