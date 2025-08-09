@@ -32,9 +32,6 @@ def main():
     cleanup_working_folders()
     log(f"Starting AV1 job processor on {MACHINE_ID}")
 
-    job_manager = JobManager()
-    job_manager.start()
-
     total_seconds = 0
     for root, _, files in os.walk(TO_ASSIGN):
         for file in files:
@@ -45,6 +42,9 @@ def main():
                     total_seconds += duration * len(CRF_VALUES)
 
     size_pbar = tqdm(total=total_seconds, unit='s', desc="Total Progress", smoothing=1, unit_scale=False, unit_divisor=1, position=0)
+
+    job_manager = JobManager()
+    job_manager.start()
 
     try:
         start_time = time.time()
