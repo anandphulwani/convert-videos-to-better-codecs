@@ -334,10 +334,12 @@ class JobManager:
         # Give workers a moment to exit gracefully
         # deadline = time.time() + 5
         for p in self.processes:
-            # while p.is_alive() and time.time() < deadline:
-            #     time.sleep(0.1)
+            p.join(timeout=3)
             if p.is_alive():
                 p.terminate()
+                p.join(timeout=2)
+                if p.is_alive():
+                    p.kill()
         self.processes.clear()
 
         for t in self.light_threads:
