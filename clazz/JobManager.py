@@ -59,9 +59,9 @@ class JobManager:
     def start(self):
         # Queue any pre-existing inputs first so workers won’t starve on startup.
         self._preload_existing_input_chunks()
+        self._start_workers()
         self._start_preloader()
         # Small head-start for the preloader is fine but not required.
-        self._start_workers()
 
     def _start_preloader(self):
         t = threading.Thread(target=self._preload_loop, daemon=True)
@@ -91,9 +91,6 @@ class JobManager:
                     else:
                         log("No more files to claim. Marking preload as done.")
                         self.preload_done.set()
-                        # Signal workers to exit when queue drains
-                        for _ in range(self.max_workers):
-                            self.task_queue.put(None)
                         break
             time.sleep(0.5)
 
