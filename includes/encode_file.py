@@ -37,52 +37,55 @@ def encode_file(src_file, rel_path, crf, bytes_encoded, video_seconds_encoded, p
     start_time = time.time()
 
     log(f"Encoding {rel_path} [CRF {crf}]", level="debug")
-    pbar = tqdm(total=duration or 100, desc=f"CRF{crf}: {os.path.basename(src_file)}", unit='s', leave=False)
 
     os.makedirs(os.path.dirname(tmp_processing_file), exist_ok=True)
-    
-    if platform.system() == "Windows":
-        # Create new process group on Windows
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1
-        )
-    else:
-        # Create new process group on Unix/Linux
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1
-        )
 
-    # Register process in shared dict
-    if process_registry is not None:
-        process_registry[os.getpid()] = process.pid
+    with tqdm(total=duration or 100,
+              desc=f"CRF{crf}: {os.path.basename(src_file)}",
+              unit='s',
+              leave=False) as pbar:
 
-    # parse progress from stdout:
-    last_progress = 0
-    for line in process.stdout:
-        if line.startswith('out_time_ms='):
-            out_ms = int(line.split('=',1)[1].strip())
-            seconds = out_ms / 1_000_000
-            delta = seconds - pbar.n
-            if delta > 0:
-                if duration:
-                    percent = seconds / duration
-                    current_progress = int(file_size * percent)
-                    delta_bytes = current_progress - last_progress
-                    if delta_bytes > 0:
-                        bytes_encoded.value += delta_bytes
-                        last_progress = current_progress
-                pbar.update(int(round(delta)))
-                video_seconds_encoded.value += int(round(delta))
+        if platform.system() == "Windows":
+            # Create new process group on Windows
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1
+            )
+        else:
+            # Create new process group on Unix/Linux
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1
+            )
 
-    stdout, stderr = process.communicate()
+
+        if process_registry is not None:
+            process_registry[os.getpid()] = process.pid
+
+        last_progress = 0
+        for line in process.stdout:
+            if line.startswith('out_time_ms='):
+                out_ms = int(line.split('=',1)[1].strip())
+                seconds = out_ms / 1_000_000
+                delta = seconds - pbar.n
+                if delta > 0:
+                    if duration:
+                        percent = seconds / duration
+                        current_progress = int(file_size * percent)
+                        delta_bytes = current_progress - last_progress
+                        if delta_bytes > 0:
+                            bytes_encoded.value += delta_bytes
+                            last_progress = current_progress
+                    pbar.update(int(round(delta)))
+                    video_seconds_encoded.value += int(round(delta))
+
+        stdout, stderr = process.communicate()
 
     if process.returncode != 0 or not os.path.exists(tmp_processing_file):
         log(f"{'=' * 29}  START  {'=' * 29}", level="error")

@@ -1,6 +1,9 @@
 import time
 from tqdm import tqdm
 import os
+import sys
+import atexit
+import shutil
 
 from config import TO_ASSIGN, CRF_VALUES, MACHINE_ID
 from helpers.logging_utils import setup_logging, log
@@ -8,6 +11,20 @@ from clazz.JobManager import JobManager
 from includes.ffmpeg import ffmpeg_get_duration
 from includes.cleanup_working_folders import cleanup_working_folders
 from includes.move_logs_to_central_output import move_logs_to_central_output
+
+def _restore():
+    try:
+        if sys.stdout and sys.stdout.isatty():
+            sys.stdout.write("\033[?25h")
+            sys.stdout.flush()
+        if os.name == "posix" and sys.stdin and sys.stdin.isatty():
+            stty = shutil.which("stty")
+            if stty:
+                os.system("stty echo 2>/dev/null")
+    except Exception:
+        pass
+
+atexit.register(_restore)
 
 # === Main ===
 def main():
@@ -56,12 +73,18 @@ def main():
     except KeyboardInterrupt:
         log("Interrupted.", level="warning")
     finally:
+        try:
+            size_pbar.close()
+            print()
+        except Exception:
+            pass
+        try:
+            tqdm.write("Clean up complete.")
+        except Exception:
+            pass
         job_manager.shutdown()
-        size_pbar.close()
-        log("Shutdown complete.")
         cleanup_working_folders()
         move_logs_to_central_output()
-        tqdm.write("Clean up complete.")
         print("Exiting main program.")
 
 if __name__ == '__main__':
