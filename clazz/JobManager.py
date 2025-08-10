@@ -216,7 +216,7 @@ class JobManager:
     def _finalize_chunk(self, chunk_folder):
         log(f"{chunk_folder} folder is removed.")
         self._remove_skipped_files(chunk_folder)
-        self._transfer_failed_tasks(chunk_folder)
+        self._transfer_failed_tasks()
         self._move_outputs_and_mark_done(chunk_folder)
 
     def _remove_skipped_files(self, chunk_folder):
@@ -226,7 +226,7 @@ class JobManager:
                 shutil.rmtree(path)
             remove_empty_dirs_in_path(path, [os.path.dirname(os.path.dirname(TMP_SKIPPED_ROOT))])
 
-    def _transfer_failed_tasks(self, chunk_folder):
+    def _transfer_failed_tasks(self):
         for crf in CRF_VALUES:
             failed_root = TMP_FAILED_ROOT.format(crf)
             for root, _, files in os.walk(failed_root):
