@@ -60,7 +60,7 @@ def copy_with_progress(src, dst, desc="Copying"):
 
                 shutil.copystat(src, dst)  # Copy metadata of the root folder
 
-def move_with_progress(src, dst, remove_empty_source=True, move_contents_not_dir_itself=False, desc="Moving"):
+def move_with_progress(src, dst, remove_empty_source=False, move_contents_not_dir_itself=False, desc="Moving"):
     """
     Move a file or directory from src to dst with progress reporting.
 
