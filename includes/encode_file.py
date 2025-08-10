@@ -11,7 +11,16 @@ from helpers.remove_topmost_dir import remove_topmost_dir
 from config import TMP_OUTPUT_ROOT, FINAL_OUTPUT_ROOT, TMP_PROCESSING
 from helpers.logging_utils import log
 
-def encode_file(src_file, rel_path, crf, bytes_encoded, video_seconds_encoded, process_registry=None):
+def encode_file(
+    src_file,
+    rel_path,
+    crf,
+    bytes_encoded,
+    video_seconds_encoded,
+    process_registry=None,
+    chunk_progress=None,
+    chunk_key=None,
+):
     tmp_processing_dir = TMP_PROCESSING.format(crf)
     tmp_output_dir = TMP_OUTPUT_ROOT.format(crf)
     final_output_dir = FINAL_OUTPUT_ROOT.format(crf)
@@ -81,6 +90,9 @@ def encode_file(src_file, rel_path, crf, bytes_encoded, video_seconds_encoded, p
                         delta_bytes = current_progress - last_progress
                         if delta_bytes > 0:
                             bytes_encoded.value += delta_bytes
+                            if chunk_progress is not None and chunk_key is not None:
+                                # per-chunk live byte progress
+                                chunk_progress[chunk_key].value += delta_bytes
                             last_progress = current_progress
                     pbar.update(int(round(delta)))
                     video_seconds_encoded.value += int(round(delta))
