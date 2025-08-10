@@ -165,7 +165,6 @@ class JobManager:
         else:
             log(f"Unknown supported result type: {status}", level="error")
 
-        remove_empty_dirs_in_path(paths["processing"], [os.path.dirname(TMP_PROCESSING)])
 
     def _touch_file(self, path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -330,7 +329,6 @@ class JobManager:
             t.join(timeout=2)
         self.light_threads.clear()
 
-        self._clear_tmp_processing()
 
         try:
             self.manager.shutdown()
