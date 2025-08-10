@@ -220,8 +220,7 @@ class JobManager:
     def _remove_skipped_files(self, chunk_folder):
         for crf in CRF_VALUES:
             path = os.path.join(TMP_SKIPPED_ROOT.format(crf), chunk_folder)
-            if os.path.exists(path):
-                shutil.rmtree(path)
+            remove_path(path)
             remove_empty_dirs_in_path(path, [os.path.dirname(os.path.dirname(TMP_SKIPPED_ROOT))])
 
     def _transfer_failed_tasks(self):
