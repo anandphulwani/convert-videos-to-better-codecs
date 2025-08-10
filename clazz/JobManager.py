@@ -21,6 +21,7 @@ from helpers.copy_and_move_with_progress import copy_with_progress, move_with_pr
 from helpers.remove_path import remove_path
 from includes.claim_files import claim_files
 from includes.encode_file import encode_file
+from includes.move_logs_to_central_output import move_logs_to_central_output
 from includes.move_done_if_all_crf_outputs_exist import move_done_if_all_crf_outputs_exist
 from includes.remove_empty_dirs_in_path import remove_empty_dirs_in_path
 
@@ -217,6 +218,7 @@ class JobManager:
         self._remove_processing_folder(chunk_folder)
         self._transfer_failed_tasks()
         self._move_outputs_and_mark_done(chunk_folder)
+        move_logs_to_central_output()
 
     def _remove_skipped_files(self, chunk_folder):
         for crf in CRF_VALUES:
