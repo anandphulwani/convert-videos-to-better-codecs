@@ -97,7 +97,7 @@ def encode_file(src_file, rel_path, crf, bytes_encoded, video_seconds_encoded, p
 
         # Print partial stderr to console
         stderr_lines = stderr.strip().splitlines()
-        snippet = stderr_lines[:10]  # Show first 10 lines
+        snippet = stderr_lines[-10:]  # Show first 10 lines
         print(f"\n{'=' * 29}  START  {'=' * 29}")
         print(f"FFmpeg error for {rel_path} [CRF {crf}]")
         print("-" * 60)
