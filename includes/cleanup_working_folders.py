@@ -4,6 +4,7 @@ from helpers.logging_utils import log
 from helpers.get_all_files_sorted import get_all_files_sorted
 from helpers.find_all_dirs import find_all_dirs
 from helpers.remove_empty_dirs import remove_empty_dirs
+from helpers.remove_path import remove_path
 from config import (
     TO_ASSIGN, IN_PROGRESS, DONE_DIR, FAILED_DIR, LOGS_DIR, 
     TMP_INPUT, TMP_PROCESSING, TMP_OUTPUT_ROOT, TMP_FAILED_ROOT, TMP_SKIPPED_ROOT
@@ -12,11 +13,8 @@ from config import (
 def cleanup_working_folders():
     log("Cleaning up WORKING folders...")
     for src, rel in get_all_files_sorted(os.path.dirname(TMP_PROCESSING)):
-        try:
-            os.remove(src)
-            log(f"Removed processed file from TMP_INPUT: {rel}", level="debug")
-        except Exception as e:
-            log(f"Failed to delete {rel} from TMP_INPUT: {e}", level="error")
+        remove_path(src)
+        log(f"Removed processed file from TMP_INPUT: {rel}", level="debug")
 
     # Remove empty directories with progress bar
     all_main_dirs = [TO_ASSIGN, IN_PROGRESS, DONE_DIR, FAILED_DIR, LOGS_DIR, TMP_INPUT, 

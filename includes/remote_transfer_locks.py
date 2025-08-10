@@ -3,6 +3,7 @@ import os
 import time
 from config import LOCKS_DIR, MACHINE_ID
 from helpers.logging_utils import log
+from helpers.remove_path import remove_path
 
 def try_acquire_remote_transfer_lock_loop():
     lock_path = os.path.join(LOCKS_DIR, f"{MACHINE_ID}.lock")
@@ -12,7 +13,7 @@ def try_acquire_remote_transfer_lock_loop():
             age = datetime.datetime.now() - mod_time
             if age.total_seconds() > 900:
                 log(f"Found stale lock for {MACHINE_ID}, removing...", level="warning")
-                os.remove(lock_path)
+                remove_path(lock_path)
         try:
             with open(lock_path, 'x'):
                 log(f"Lock acquired by {MACHINE_ID}")

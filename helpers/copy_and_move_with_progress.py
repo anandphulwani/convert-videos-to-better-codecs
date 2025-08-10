@@ -3,6 +3,8 @@ import shutil
 from tqdm import tqdm
 
 from multiprocessing import RLock
+from helpers.remove_path import remove_path
+from helpers.remove_empty_dir_upwards import remove_empty_dirs_upwards
 
 _progress_lock = RLock()
 
@@ -58,19 +60,6 @@ def copy_with_progress(src, dst, desc="Copying"):
 
                 shutil.copystat(src, dst)  # Copy metadata of the root folder
 
-def _remove_path(path):
-    """Remove a file or directory at the given path."""
-    if os.path.isfile(path):
-        os.remove(path)
-    else:
-        shutil.rmtree(path)
-
-def _remove_empty_dirs_upwards(path):
-    """Recursively remove empty directories upward from the given path."""
-    while os.path.isdir(path) and not os.listdir(path):
-        os.rmdir(path)
-        path = os.path.dirname(path)
-
 def move_with_progress(src, dst, remove_empty_source=True, move_contents_not_dir_itself=False, desc="Moving"):
     """
     Move a file or directory from src to dst with progress reporting.
@@ -93,15 +82,15 @@ def move_with_progress(src, dst, remove_empty_source=True, move_contents_not_dir
                 item_dst = os.path.join(dst, item)
 
                 copy_with_progress(item_src, item_dst, desc=f"{desc}: {item}")
-                _remove_path(item_src)
+                remove_path(item_src)
         else:
             # Move the entire src (file or directory) into dst
             copy_with_progress(src, dst, desc)
-            _remove_path(src)
+            remove_path(src)
 
         # Optionally remove any empty directories left behind
         if remove_empty_source:
             if move_contents_not_dir_itself:
-                _remove_empty_dirs_upwards(src)
+                remove_empty_dirs_upwards(src)
             else:
-                _remove_empty_dirs_upwards(os.path.dirname(src))
+                remove_empty_dirs_upwards(os.path.dirname(src))

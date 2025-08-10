@@ -18,6 +18,7 @@ from helpers.get_topmost_dir import get_topmost_dir
 from helpers.remove_topmost_dir import remove_topmost_dir
 from helpers.logging_utils import log
 from helpers.copy_and_move_with_progress import copy_with_progress, move_with_progress
+from helpers.remove_path import remove_path
 from includes.claim_files import claim_files
 from includes.encode_file import encode_file
 from includes.move_done_if_all_crf_outputs_exist import move_done_if_all_crf_outputs_exist
@@ -153,7 +154,7 @@ class JobManager:
 
     def _process_result_status(self, status, paths):
         if status in ("failed", "skipped-notsupported"):
-            self._delete_src(paths["processing"])
+            remove_path(paths["processing"])
             self._touch_file(paths["failed"])
         elif status == "skipped-alreadyexists-main":
             self._touch_file(paths["skipped"])
@@ -165,10 +166,6 @@ class JobManager:
             log(f"Unknown supported result type: {status}", level="error")
 
         remove_empty_dirs_in_path(paths["processing"], [os.path.dirname(TMP_PROCESSING)])
-
-    def _delete_src(self, delete_path):
-        if delete_path and os.path.exists(delete_path):
-            os.remove(delete_path)
 
     def _touch_file(self, path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -196,7 +193,7 @@ class JobManager:
         if not self._all_crf_outputs_exist(task.rel_path):
             return
 
-        self._safe_remove(task.src_path)
+        remove_path(task.src_path)
         remove_empty_dirs_in_path(os.path.dirname(task.src_path), [TMP_INPUT])
 
         chunk_folder = get_topmost_dir(task.rel_path)
@@ -215,12 +212,6 @@ class JobManager:
             if not any(os.path.exists(p) for p in paths):
                 return False
         return True
-
-    def _safe_remove(self, path):
-        try:
-            os.remove(path)
-        except Exception as e:
-            log(f"Failed to delete source file {path}: {e}", level="error")
 
     def _finalize_chunk(self, chunk_folder):
         log(f"{chunk_folder} folder is removed.")
@@ -258,11 +249,8 @@ class JobManager:
                     for crf_failed in CRF_VALUES:
                         delete_path = os.path.join(TMP_FAILED_ROOT.format(crf_failed), with_chunk_rel_path)
                         if os.path.exists(delete_path):
-                            try:
-                                os.remove(delete_path)
-                                log(f"Deleted failed file from tmp_failed (crf={crf_failed}): {delete_path}")
-                            except Exception as e:
-                                log(f"Error deleting failed file from tmp_failed (crf={crf_failed}): {e}", level="error")
+                            remove_path(delete_path)
+                            log(f"Deleted failed file from tmp_failed (crf={crf_failed}): {delete_path}")
 
     def _move_outputs_and_mark_done(self, chunk_folder):
         all_crf_file_sets = []
@@ -307,10 +295,7 @@ class JobManager:
             for dirpath, _, filenames in os.walk(tmp_processing_path):
                 for filename in filenames:
                     file_path = os.path.join(dirpath, filename)
-                    try:
-                        os.remove(file_path)
-                    except Exception as e:
-                        log(f"Failed to delete {file_path}: {e}", level="error")
+                    remove_path(file_path)
 
     def shutdown(self):
         # Request stop, and make sure workers can unblock from .get()
