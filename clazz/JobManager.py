@@ -268,7 +268,7 @@ class JobManager:
             chunk_crf_path = os.path.join(TMP_OUTPUT_ROOT.format(crf), chunk_folder)
             final_output_path = FINAL_OUTPUT_ROOT.format(crf)
             if os.path.exists(chunk_crf_path):
-                move_with_progress(chunk_crf_path, final_output_path, True, True)
+                move_with_progress(chunk_crf_path, final_output_path, False, True)
 
         for rel_file in common_files:
             src_file = os.path.join(IN_PROGRESS, rel_file)
