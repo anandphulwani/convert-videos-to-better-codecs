@@ -193,7 +193,7 @@ class JobManager:
             return
 
         remove_path(task.src_path)
-        remove_empty_dirs_in_path(os.path.dirname(task.src_path), [TMP_INPUT])
+        remove_empty_dirs_in_path(task.src_path, [os.path.dirname(TMP_INPUT)])
 
         chunk_folder = get_topmost_dir(task.rel_path)
         chunk_path = os.path.join(TMP_INPUT, chunk_folder)
@@ -214,6 +214,7 @@ class JobManager:
 
     def _finalize_chunk(self, chunk_folder):
         self._remove_skipped_files(chunk_folder)
+        self._remove_processing_folder(chunk_folder)
         self._transfer_failed_tasks()
         self._move_outputs_and_mark_done(chunk_folder)
 
@@ -268,6 +269,7 @@ class JobManager:
             final_output_path = FINAL_OUTPUT_ROOT.format(crf)
             if os.path.exists(chunk_crf_path):
                 move_with_progress(chunk_crf_path, final_output_path, False, True)
+            remove_empty_dirs_in_path(chunk_crf_path, [os.path.dirname(os.path.dirname(TMP_OUTPUT_ROOT))])
 
         for rel_file in common_files:
             src_file = os.path.join(IN_PROGRESS, rel_file)
@@ -275,6 +277,7 @@ class JobManager:
             if os.path.exists(src_file):
                 move_with_progress(src_file, dst_file)
 
+        # Move the remaining files, if any
         move_done_if_all_crf_outputs_exist()
 
     def _increment_jobs(self):
@@ -285,14 +288,10 @@ class JobManager:
         with self.active_jobs.get_lock():
             self.active_jobs.value -= 1
 
-    def _clear_tmp_processing(self):
-        log("Clearing TMP_PROCESSING directory...")
-        for crf in self.crf_values:
-            tmp_processing_path = TMP_PROCESSING.format(crf)
-            for dirpath, _, filenames in os.walk(tmp_processing_path):
-                for filename in filenames:
-                    file_path = os.path.join(dirpath, filename)
-                    remove_path(file_path)
+    def _remove_processing_folder(self, chunk_folder):
+        for crf in CRF_VALUES:
+            path = os.path.join(TMP_PROCESSING.format(crf), chunk_folder)
+            remove_empty_dirs_in_path(path, [os.path.dirname(os.path.dirname(TMP_PROCESSING))])
 
     def shutdown(self):
         # Request stop, and make sure workers can unblock from .get()
