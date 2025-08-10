@@ -6,6 +6,7 @@ import threading
 import time
 from multiprocessing import Manager, Process, JoinableQueue, RLock, Event, Value
 from queue import Empty
+from tqdm import tqdm
 from dataclasses import dataclass
 
 from config import ( 
@@ -30,6 +31,7 @@ class EncodingTask:
     src_path: str
     rel_path: str
     crf: int
+    chunk: str
 
 class JobManager:
     def __init__(self):
@@ -58,6 +60,10 @@ class JobManager:
         self.bytes_encoded = self.manager.Value('q', 0)
         self.video_seconds_encoded = self.manager.Value('q', 0)
 
+        # per-chunk totals & live progress (bytes)
+        self.chunk_totals = self.manager.dict()     # {chunk_name: total_bytes}
+        self.chunk_progress = self.manager.dict()   # {chunk_name: Value('q')}
+
     def start(self):
         # Queue any pre-existing inputs first so workers won’t starve on startup.
         self._preload_existing_input_chunks()
@@ -84,12 +90,31 @@ class JobManager:
                 if self.active_jobs.value <= max(1, self.max_workers // 2):
                     chunk = claim_files()
                     if chunk:
+                        # infer chunk name from first file’s rel path
+                        _, _, first_rel = chunk[0]
+                        chunk_name = get_topmost_dir(first_rel)
+
+                        # 1) SIZE THE CHUNK (fast: file sizes only) with a small tqdm
+                        total_input_bytes = 0
+                        with tqdm(total=len(chunk),
+                                  desc=f"Sizing {chunk_name}",
+                                  unit="file",
+                                  leave=False) as sbar:
+                            for src, _, _ in chunk:
+                                try:
+                                    total_input_bytes += os.path.getsize(src) * len(self.crf_values)
+                                except FileNotFoundError:
+                                    pass
+                                sbar.update(1)
+                        self.chunk_totals[chunk_name] = total_input_bytes
+                        self.chunk_progress[chunk_name] = self.manager.Value('q', 0)
+
                         for src, dst, rel in chunk:
                             local_dst = os.path.join(self.tmp_input_dir, rel)
                             copy_with_progress(src, local_dst, desc=f"Preloading {os.path.basename(rel)}")
                             move_with_progress(src, dst, desc=f"Preloading {os.path.basename(rel)}")
                             for crf in self.crf_values:
-                                self._enqueue_task(EncodingTask(local_dst, rel, crf))
+                                self._enqueue_task(EncodingTask(local_dst, rel, crf, chunk_name))
                     else:
                         log("No more files to claim. Marking preload as done.")
                         self.preload_done.set()
@@ -121,7 +146,9 @@ class JobManager:
                     task.crf,
                     self.bytes_encoded,
                     self.video_seconds_encoded,
-                    process_registry=self.process_registry
+                    process_registry=self.process_registry,
+                    chunk_progress=self.chunk_progress,
+                    chunk_key=task.chunk
                 )
                 self._handle_encoding_result(task, result)
             except Exception as e:
@@ -136,6 +163,18 @@ class JobManager:
         crf = task.crf
         paths = self._construct_paths(task)
         status = result[2]
+
+        # If we skipped before any encoding happened, advance the chunk by the file size for this CRF,
+        # so the bar remains accurate.
+        if status in ("skipped-alreadyexists-main", "skipped-alreadyexists-tmp", "skipped-notsupported"):
+            try:
+                sz = os.path.getsize(task.src_path)
+            except FileNotFoundError:
+                sz = 0
+            try:
+                self.chunk_progress[task.chunk].value += sz
+            except KeyError:
+                pass
 
         with self.file_moving_lock:
             self._process_result_status(status, paths)
