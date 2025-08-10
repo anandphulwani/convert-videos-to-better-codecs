@@ -214,7 +214,6 @@ class JobManager:
         return True
 
     def _finalize_chunk(self, chunk_folder):
-        log(f"{chunk_folder} folder is removed.")
         self._remove_skipped_files(chunk_folder)
         self._transfer_failed_tasks()
         self._move_outputs_and_mark_done(chunk_folder)

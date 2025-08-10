@@ -14,7 +14,6 @@ def cleanup_working_folders():
     log("Cleaning up WORKING folders...")
     for src, rel in get_all_files_sorted(os.path.dirname(TMP_PROCESSING)):
         remove_path(src)
-        log(f"Removed processed file from TMP_INPUT: {rel}", level="debug")
 
     # Remove empty directories with progress bar
     all_main_dirs = [TO_ASSIGN, IN_PROGRESS, DONE_DIR, FAILED_DIR, LOGS_DIR, TMP_INPUT, 
