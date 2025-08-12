@@ -44,7 +44,7 @@ def copy_with_progress(src, dst, desc="Copying"):
         else:
             os.makedirs(dst, exist_ok=True)
 
-        with tqdm(total=total_size, unit='B', unit_scale=True, desc=desc, leave=False, position=0) as pbar:
+        with tqdm(total=total_size, unit='B', unit_scale=True, desc=desc, leave=False, position=0, dynamic_ncols=True) as pbar:
             if os.path.isfile(src):
                 _copy_file_with_progress(src, dst, pbar)
             else:
