@@ -1,4 +1,5 @@
 import os
+import re
 import pathlib
 import signal
 import shutil
@@ -25,6 +26,17 @@ from includes.encode_file import encode_file
 from includes.move_logs_to_central_output import move_logs_to_central_output
 from includes.move_done_if_all_crf_outputs_exist import move_done_if_all_crf_outputs_exist
 from includes.remove_empty_dirs_in_path import remove_empty_dirs_in_path
+
+ansi_re = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')  # strip ANSI to measure width
+
+def set_status_line(bar: tqdm, text: str):
+    # pad to full width so we overwrite any leftover characters on that line
+    cols = bar.ncols or shutil.get_terminal_size((80, 20)).columns
+    cols =  cols + 1
+    visible = ansi_re.sub('', text)
+    padded = (visible[:max(1, cols-1)]).ljust(max(1, cols-1))
+    bar.set_description_str(padded)
+    bar.refresh()
 
 @dataclass
 class EncodingTask:
@@ -77,9 +89,9 @@ class JobManager:
         self.light_threads.append(t)
 
     def _start_workers(self):
-        # log("Starting workers...")
-        for _ in range(self.max_workers):
-            p = Process(target=self._worker_loop, daemon=True)
+        # One dedicated UI "slot" per worker
+        for slot_idx in range(self.max_workers):
+            p = Process(target=self._worker_loop, args=(slot_idx,), daemon=True)
             p.start()
             self.processes.append(p)
 
@@ -126,15 +138,31 @@ class JobManager:
         with self.total_tasks.get_lock():
             self.total_tasks.value += 1
 
-    def _worker_loop(self):
+    def _worker_loop(self, slot_idx: int):
+        # idle_tqdm = None
+        status_bar = tqdm(total=1, position=slot_idx, bar_format='{desc}') #, dynamic_ncols=True)
         while not self.stop_event.is_set():
             try:
                 task = self.task_queue.get(timeout=1)
+                set_status_line(status_bar, "")
+                # if idle_tqdm:
+                #     idle_tqdm.set_description_str("") 
+                #     idle_tqdm.close()
+                #     idle_tqdm = None
             except Empty:
+                set_status_line(status_bar, f"Slot {slot_idx + 1}: idle")
+                # if not idle_tqdm:
+                #     # idle_tqdm = tqdm(total=600, desc="Processing", position=slot_idx, dynamic_ncols=True)
+                #     idle_tqdm = tqdm(total=1, position=slot_idx, bar_format='{desc}') #, dynamic_ncols=True)
+                # if idle_tqdm and idle_tqdm.n < 600:
+                #     idle_tqdm.set_description_str(f"Slot {slot_idx}: idle")
+                #     idle_tqdm.refresh()
                 continue
 
             # Sentinel -> clean exit
             if task is None:
+                set_status_line(status_bar, f"Slot {slot_idx + 1}: exiting…")
+                # log("........... Doing a clean exit ...........")
                 self.task_queue.task_done()
                 break
 
@@ -148,7 +176,8 @@ class JobManager:
                     self.video_seconds_encoded,
                     process_registry=self.process_registry,
                     chunk_progress=self.chunk_progress,
-                    chunk_key=task.chunk
+                    chunk_key=task.chunk,
+                    bar_position=slot_idx,
                 )
                 self._handle_encoding_result(task, result)
             except Exception as e:
@@ -158,6 +187,7 @@ class JobManager:
                     self.completed_tasks.value += 1
                 self._decrement_jobs()
                 self.task_queue.task_done()
+                set_status_line(status_bar, f"Slot {slot_idx}: idle")
 
     def _handle_encoding_result(self, task, result):
         crf = task.crf
@@ -222,8 +252,9 @@ class JobManager:
                 src_path = os.path.join(dirpath, filename)
                 rel_path = os.path.relpath(src_path, self.tmp_input_dir)
 
+                chunk_name = get_topmost_dir(rel_path)
                 for crf in self.crf_values:
-                    self._enqueue_task(EncodingTask(src_path, rel_path, crf))
+                    self._enqueue_task(EncodingTask(src_path, rel_path, crf, chunk_name))
                     task_count += 1
 
         log(f"Queued {task_count} tasks from existing TMP_INPUT chunk folders.")
@@ -232,13 +263,13 @@ class JobManager:
         if not self._all_crf_outputs_exist(task.rel_path):
             return
 
-        remove_path(task.src_path)
-        remove_empty_dirs_in_path(task.src_path, [os.path.dirname(TMP_INPUT)])
-
         chunk_folder = get_topmost_dir(task.rel_path)
         chunk_path = os.path.join(TMP_INPUT, chunk_folder)
 
-        if not os.path.exists(chunk_path):
+        remove_path(task.src_path)
+        remove_empty_dirs_in_path(task.src_path, [chunk_path])
+
+        if not os.listdir(chunk_path):
             self._finalize_chunk(chunk_folder)
 
     def _all_crf_outputs_exist(self, rel_path):
@@ -253,6 +284,8 @@ class JobManager:
         return True
 
     def _finalize_chunk(self, chunk_folder):
+        self._touch_file(os.path.join(TMP_INPUT, f"{chunk_folder}.done"))
+        os.rmdir(os.path.join(TMP_INPUT, chunk_folder))
         self._remove_skipped_files(chunk_folder)
         self._remove_processing_folder(chunk_folder)
         self._transfer_failed_tasks()

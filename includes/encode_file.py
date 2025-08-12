@@ -20,6 +20,7 @@ def encode_file(
     process_registry=None,
     chunk_progress=None,
     chunk_key=None,
+    bar_position: int = 0,
 ):
     tmp_processing_dir = TMP_PROCESSING.format(crf)
     tmp_output_dir = TMP_OUTPUT_ROOT.format(crf)
@@ -52,7 +53,9 @@ def encode_file(
     with tqdm(total=duration or 100,
               desc=f"CRF{crf}: {os.path.basename(src_file)}",
               unit='s',
-              leave=False) as pbar:
+              leave=False,
+              position=bar_position,
+              dynamic_ncols=True) as pbar:
 
         if platform.system() == "Windows":
             # Create new process group on Windows
