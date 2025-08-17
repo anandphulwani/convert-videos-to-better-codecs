@@ -3,11 +3,12 @@ import os
 import platform
 import subprocess
 import time
-from tqdm import tqdm
+import math
 
 from includes.ffmpeg import ffmpeg_get_duration, ffmpeg_av1_crf_cmd_generator
 from helpers.format_elapsed import format_elapsed
 from helpers.remove_topmost_dir import remove_topmost_dir
+from tqdm_manager import get_tqdm_manager, BAR_TYPE_FILE
 from config import TMP_OUTPUT_ROOT, FINAL_OUTPUT_ROOT, TMP_PROCESSING
 from helpers.logging_utils import log
 
@@ -16,11 +17,9 @@ def encode_file(
     rel_path,
     crf,
     bytes_encoded,
-    video_seconds_encoded,
     process_registry=None,
     chunk_progress=None,
     chunk_key=None,
-    bar_position: int = 0,
 ):
     tmp_processing_dir = TMP_PROCESSING.format(crf)
     tmp_output_dir = TMP_OUTPUT_ROOT.format(crf)
@@ -50,57 +49,52 @@ def encode_file(
 
     os.makedirs(os.path.dirname(tmp_processing_file), exist_ok=True)
 
-    with tqdm(total=duration or 100,
-              desc=f"CRF{crf}: {os.path.basename(src_file)}",
-              unit='s',
-              leave=False,
-              position=bar_position,
-              dynamic_ncols=True) as pbar:
+    if platform.system() == "Windows":
+        # Create new process group on Windows
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+    else:
+        # Create new process group on Unix/Linux
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
 
-        if platform.system() == "Windows":
-            # Create new process group on Windows
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1
-            )
-        else:
-            # Create new process group on Unix/Linux
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1
-            )
+    if process_registry is not None:
+        process_registry[os.getpid()] = process.pid
 
+    last_progress = 0
+    for line in process.stdout:
+        if line.startswith('out_time_ms='):
+            out_ms = int(line.split('=', 1)[1].strip())
+            percent = out_ms / duration
+            current_progress = math.floor(file_size * percent)
+            delta_bytes = current_progress - last_progress
+            if delta_bytes > 0:
+                bytes_encoded.value += delta_bytes
+                if chunk_progress is not None and chunk_key is not None:
+                    # per-chunk live byte progress
+                    chunk_progress[chunk_key].value += delta_bytes
+                last_progress = current_progress
 
-        if process_registry is not None:
-            process_registry[os.getpid()] = process.pid
+        if line.startswith('progress=end'): 
+            delta_bytes = file_size - last_progress
+            if delta_bytes > 0:
+                bytes_encoded.value += delta_bytes
+                if chunk_progress is not None and chunk_key is not None:
+                    # per-chunk live byte progress
+                    chunk_progress[chunk_key].value += delta_bytes
+                last_progress = current_progress
 
-        last_progress = 0
-        for line in process.stdout:
-            if line.startswith('out_time_ms='):
-                out_ms = int(line.split('=',1)[1].strip())
-                seconds = out_ms / 1_000_000
-                delta = seconds - pbar.n
-                if delta > 0:
-                    if duration:
-                        percent = seconds / duration
-                        current_progress = int(file_size * percent)
-                        delta_bytes = current_progress - last_progress
-                        if delta_bytes > 0:
-                            bytes_encoded.value += delta_bytes
-                            if chunk_progress is not None and chunk_key is not None:
-                                # per-chunk live byte progress
-                                chunk_progress[chunk_key].value += delta_bytes
-                            last_progress = current_progress
-                    pbar.update(int(round(delta)))
-                    video_seconds_encoded.value += int(round(delta))
-
-        stdout, stderr = process.communicate()
+    stdout, stderr = process.communicate()
 
     if process.returncode != 0 or not os.path.exists(tmp_processing_file):
         log(f"{'=' * 29}  START  {'=' * 29}", level="error")

@@ -1,32 +1,21 @@
 import os
 import shutil
-from tqdm import tqdm
-
 from multiprocessing import RLock
+
 from helpers.remove_path import remove_path
 from helpers.remove_empty_dir_upwards import remove_empty_dirs_upwards
 
 _progress_lock = RLock()
 
-def _calculate_total_size(path):
-    """Return the total size of a file or all files within a directory."""
-    if os.path.isfile(path):
-        return os.path.getsize(path)
-    return sum(
-        os.path.getsize(os.path.join(dirpath, f))
-        for dirpath, _, files in os.walk(path)
-        for f in files
-    )
-
-def _copy_file_with_progress(src_file, dst_file, pbar):
-    """Copy a single file with progress updates."""
+def _copy_file(src_file, dst_file):
+    """Copy a single file."""
+    os.makedirs(os.path.dirname(dst_file), exist_ok=True)
     with open(src_file, 'rb') as fsrc, open(dst_file, 'wb') as fdst:
         while True:
             buf = fsrc.read(1024 * 1024)
             if not buf:
                 break
             fdst.write(buf)
-            pbar.update(len(buf))
     shutil.copystat(src_file, dst_file)
 
 def copy_with_progress(src, dst, desc="Copying"):
@@ -36,29 +25,22 @@ def copy_with_progress(src, dst, desc="Copying"):
     Shows a tqdm progress bar for total bytes copied.
     """
     with _progress_lock:
-        total_size = _calculate_total_size(src)
-
-        # Ensure destination directory exists
         if os.path.isfile(src):
             os.makedirs(os.path.dirname(dst), exist_ok=True)
+            _copy_file(src, dst)
         else:
             os.makedirs(dst, exist_ok=True)
+            for dirpath, _, files in os.walk(src):
+                rel_path = os.path.relpath(dirpath, src)
+                target_dir = os.path.join(dst, rel_path)
+                os.makedirs(target_dir, exist_ok=True)
 
-        with tqdm(total=total_size, unit='B', unit_scale=True, desc=desc, leave=False, position=0, dynamic_ncols=True) as pbar:
-            if os.path.isfile(src):
-                _copy_file_with_progress(src, dst, pbar)
-            else:
-                for dirpath, _, files in os.walk(src):
-                    rel_path = os.path.relpath(dirpath, src)
-                    target_dir = os.path.join(dst, rel_path)
-                    os.makedirs(target_dir, exist_ok=True)
+                for file in files:
+                    src_file = os.path.join(dirpath, file)
+                    dst_file = os.path.join(target_dir, file)
+                    _copy_file(src_file, dst_file)
 
-                    for file in files:
-                        src_file = os.path.join(dirpath, file)
-                        dst_file = os.path.join(target_dir, file)
-                        _copy_file_with_progress(src_file, dst_file, pbar)
-
-                shutil.copystat(src, dst)  # Copy metadata of the root folder
+            shutil.copystat(src, dst)
 
 def move_with_progress(src, dst, remove_empty_source=False, move_contents_not_dir_itself=False, desc="Moving"):
     """

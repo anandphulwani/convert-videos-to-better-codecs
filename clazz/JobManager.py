@@ -27,17 +27,6 @@ from includes.move_logs_to_central_output import move_logs_to_central_output
 from includes.move_done_if_all_crf_outputs_exist import move_done_if_all_crf_outputs_exist
 from includes.remove_empty_dirs_in_path import remove_empty_dirs_in_path
 
-ansi_re = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')  # strip ANSI to measure width
-
-def set_status_line(bar: tqdm, text: str):
-    # pad to full width so we overwrite any leftover characters on that line
-    cols = bar.ncols or shutil.get_terminal_size((80, 20)).columns
-    cols =  cols + 1
-    visible = ansi_re.sub('', text)
-    padded = (visible[:max(1, cols-1)]).ljust(max(1, cols-1))
-    bar.set_description_str(padded)
-    bar.refresh()
-
 @dataclass
 class EncodingTask:
     src_path: str
@@ -70,7 +59,6 @@ class JobManager:
         self.stop_event = Event()
         self.file_moving_lock = RLock()
         self.bytes_encoded = self.manager.Value('q', 0)
-        self.video_seconds_encoded = self.manager.Value('q', 0)
 
         # per-chunk totals & live progress (bytes)
         self.chunk_totals = self.manager.dict()     # {chunk_name: total_bytes}
@@ -106,18 +94,14 @@ class JobManager:
                         _, _, first_rel = chunk[0]
                         chunk_name = get_topmost_dir(first_rel)
 
-                        # 1) SIZE THE CHUNK (fast: file sizes only) with a small tqdm
+                        # 1) SIZE THE CHUNK (fast: file sizes only) — no tqdm
                         total_input_bytes = 0
-                        with tqdm(total=len(chunk),
-                                  desc=f"Sizing {chunk_name}",
-                                  unit="file",
-                                  leave=False) as sbar:
-                            for src, _, _ in chunk:
-                                try:
-                                    total_input_bytes += os.path.getsize(src) * len(self.crf_values)
-                                except FileNotFoundError:
-                                    pass
-                                sbar.update(1)
+                        for src, _, _ in chunk:
+                            try:
+                                total_input_bytes += os.path.getsize(src) * len(self.crf_values)
+                            except FileNotFoundError:
+                                pass
+
                         self.chunk_totals[chunk_name] = total_input_bytes
                         self.chunk_progress[chunk_name] = self.manager.Value('q', 0)
 
@@ -144,25 +128,11 @@ class JobManager:
         while not self.stop_event.is_set():
             try:
                 task = self.task_queue.get(timeout=1)
-                set_status_line(status_bar, "")
-                # if idle_tqdm:
-                #     idle_tqdm.set_description_str("") 
-                #     idle_tqdm.close()
-                #     idle_tqdm = None
             except Empty:
-                set_status_line(status_bar, f"Slot {slot_idx + 1}: idle")
-                # if not idle_tqdm:
-                #     # idle_tqdm = tqdm(total=600, desc="Processing", position=slot_idx, dynamic_ncols=True)
-                #     idle_tqdm = tqdm(total=1, position=slot_idx, bar_format='{desc}') #, dynamic_ncols=True)
-                # if idle_tqdm and idle_tqdm.n < 600:
-                #     idle_tqdm.set_description_str(f"Slot {slot_idx}: idle")
-                #     idle_tqdm.refresh()
                 continue
 
             # Sentinel -> clean exit
             if task is None:
-                set_status_line(status_bar, f"Slot {slot_idx + 1}: exiting…")
-                # log("........... Doing a clean exit ...........")
                 self.task_queue.task_done()
                 break
 
@@ -173,11 +143,9 @@ class JobManager:
                     task.rel_path,
                     task.crf,
                     self.bytes_encoded,
-                    self.video_seconds_encoded,
                     process_registry=self.process_registry,
                     chunk_progress=self.chunk_progress,
                     chunk_key=task.chunk,
-                    bar_position=slot_idx,
                 )
                 self._handle_encoding_result(task, result)
             except Exception as e:
@@ -187,7 +155,6 @@ class JobManager:
                     self.completed_tasks.value += 1
                 self._decrement_jobs()
                 self.task_queue.task_done()
-                set_status_line(status_bar, f"Slot {slot_idx}: idle")
 
     def _handle_encoding_result(self, task, result):
         crf = task.crf

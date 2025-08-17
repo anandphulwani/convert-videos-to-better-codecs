@@ -54,7 +54,8 @@ def log(msg, level="info"):
 
     # Only write to console if level >= current logging level
     if log_level_num >= configured_level:
-        tqdm.write(f"[{level.upper()}] {msg}")
+        clear_code = "\033[J"
+        tqdm.write(f"[{level.upper()}] {msg}{clear_code}")
 
     logger_fn = {
         'debug': logging.debug,
