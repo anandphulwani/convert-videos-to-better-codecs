@@ -9,7 +9,9 @@ def ffmpeg_get_duration(file_path):
         file_path
     ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
-        return int(float(result.stdout.strip()))
+        duration_sec = float(result.stdout.strip())
+        duration_ms = int(duration_sec * 1000 * 1000)
+        return duration_ms
     except Exception as e:
         log(f"ffprobe failed for {file_path}: {e}", level="debug")
         return None
