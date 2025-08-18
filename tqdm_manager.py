@@ -1,12 +1,17 @@
+# region Includes
 # helpers/tqdm_manager.py
 import sys
 import threading
 import time
-import math
 import requests
 from queue import Empty
 import multiprocessing as mp
 from tqdm import tqdm
+from helpers.format_elapsed import format_elapsed
+from helpers.format_size import format_size
+from helpers.format_time import format_time
+from helpers.call_http_url import call_http_url
+from helpers.clear_terminal_below_cursor import clear_terminal_below_cursor
 
 BAR_TYPE_OTHER = "other"
 BAR_TYPE_FILE = "file"
@@ -14,39 +19,17 @@ BAR_TYPE_CHUNK = "chunk"
 
 _instance = None
 
+# endregion
+
 class TqdmManager:
-    def _format_size(self, n_bytes: int) -> str:
-        """Format size from bytes -> KB or MB."""
-        KB = 1024
-        MB = KB * 1024
-        if n_bytes < MB:
-            return f"{n_bytes / KB:.1f} KB"
-        else:
-            return f"{n_bytes / MB:.1f} MB"
-
-    def _format_elapsed(self, seconds: float) -> str:
-        """Format elapsed time into s, mm:ss, or hh:mm:ss."""
-        if seconds < 60:
-            return f"{math.ceil(seconds)}s"
-        elif seconds < 3600:
-            mins, secs = divmod(math.ceil(seconds), 60)
-            return f"{mins:02}m {secs:02}s"
-        else:
-            hrs, rem = divmod(math.ceil(seconds), 3600)
-            mins, secs = divmod(rem, 60)
-            return f"{hrs}h {mins:02}m {secs:02}s"
-
-    def _format_time(self, seconds):
-        mins, secs = divmod(int(seconds), 60)
-        return f"{mins:02}:{secs:02}"
-
-    def _refresh_positions(self):
-        pos = self.position_base
-        for bar_type in [BAR_TYPE_OTHER, BAR_TYPE_FILE, BAR_TYPE_CHUNK]:
-            for _, bar in self.bars[bar_type]:
-                bar.position = pos
-                bar.refresh()
-                pos += 1
+    # region Other Functions
+    # def _refresh_positions(self):
+    #     pos = self.position_base
+    #     for bar_type in [BAR_TYPE_OTHER, BAR_TYPE_FILE, BAR_TYPE_CHUNK]:
+    #         for _, bar in self.bars[bar_type]:
+    #             bar.position = pos
+    #             bar.refresh()
+    #             pos += 1
 
     def _generate_desc(self, bar_type, bar_id, metadata):
         if bar_type == BAR_TYPE_CHUNK:
@@ -59,16 +42,23 @@ class TqdmManager:
             return metadata.get("label", bar_id)
         return bar_id
 
-    def clear_terminal_below_cursor(self):
-        """Clears the terminal below the current cursor position."""
-        with self.lock:
-            sys.stdout.write("\033[J")  # ANSI code: erase below cursor
-            sys.stdout.flush()
-
+    def __init__(self, base_position=0):
+        self.lock = threading.RLock()
+        self.bars = {BAR_TYPE_OTHER: [], BAR_TYPE_FILE: [], BAR_TYPE_CHUNK: []}
+        self.metadata = {}
+        self.start_times = {}
+        self.last_values = {}
+        self.bar_ids = {}  # bar_id -> (bar_type, tqdm instance)
+        self.position_base = base_position
+        self._event_thread = None
+        self._event_queue = None
+        self._stop_event = threading.Event()
+    # endregion
+    
     def temporarily_disable_bars(self, pairs=[(240, 10, 2)]):
         def worker(wait_before, loop_duration, disable_duration):
             time.sleep(wait_before)
-            self.call_http_url("Hiding all the bars now")
+            call_http_url("Hiding all the bars now")
             while True:
                 with self.lock:
                     for _, bar in self.bar_ids.values():
@@ -76,9 +66,9 @@ class TqdmManager:
                         # bar.pause_timer()
                         # time.sleep(20)
                         bar.disable = True
-                        self.clear_terminal_below_cursor()
+                        clear_terminal_below_cursor()
                 time.sleep(disable_duration)
-                self.call_http_url("Showing all the bars now")
+                call_http_url("Showing all the bars now")
                 with self.lock:
                     for _, bar in self.bar_ids.values():
                         bar.disable = False
@@ -94,40 +84,16 @@ class TqdmManager:
                 daemon=True
             ).start()
 
-    def call_http_url(self, message, timeout=10):
-        # Open the file in append mode
-        with open('call_http_url.txt', 'a') as file:
-            file.write(f"{message}\n")
-        return
-        try:        
-            requests.post("https://ntfy.sh/anand_alerts", data=message.encode(encoding='utf-8'), timeout=timeout)
-        except requests.exceptions.RequestException as e:
-            print(f"Error calling URL: {e}")
-            return None
-
-    def __init__(self, base_position=0):
-        self.lock = threading.RLock()
-        self.bars = {BAR_TYPE_OTHER: [], BAR_TYPE_FILE: [], BAR_TYPE_CHUNK: []}
-        self.metadata = {}
-        self.start_times = {}
-        self.last_values = {}
-        self.bar_ids = {}  # bar_id -> (bar_type, tqdm instance)
-        self.position_base = base_position
-        self._event_thread = None
-        self._event_queue = None
-        self._stop_event = threading.Event()
-
     def _get_position(self, bar_type):
         pos = self.position_base
         # if bar_type == BAR_TYPE_OTHER:
         #     return pos
         # pos += len(self.bars[BAR_TYPE_OTHER])
         if bar_type == BAR_TYPE_FILE:
-            pos += len(self.bars[BAR_TYPE_FILE])
-            # self.call_http_url(f"pos BAR_TYPE_FILE: {pos}")
+            return None
         if bar_type == BAR_TYPE_CHUNK:
             pos += 15 + len(self.bars[BAR_TYPE_CHUNK]) # + len(self.bars[BAR_TYPE_FILE]) 
-            # self.call_http_url(f"pos BAR_TYPE_CHUNK: {pos}")
+            # call_http_url(f"pos BAR_TYPE_CHUNK: {pos}")
         return pos
 
     def create_bar(self, bar_type, bar_id, total, metadata=None, unit='it', unit_scale=False, unit_divisor=1):
@@ -141,7 +107,7 @@ class TqdmManager:
             bar = None
             if bar_type == BAR_TYPE_CHUNK:
                 if "divider" not in self.bar_ids:
-                    self.call_http_url(f"Bar position is: {position}, Creating bar: divider")
+                    call_http_url(f"Bar position is: {position}, Creating bar: divider")
                     divider = tqdm(
                         total=1,
                         bar_format="{bar}",
@@ -156,7 +122,7 @@ class TqdmManager:
                     self.bar_ids["divider"] = (bar_type, divider)
                     position += 1
 
-                self.call_http_url(f"Bar position is: {position}, Creating bar: {bar_id}, bars.length: {len(self.bars)}, chunk_bars.length: {len(self.bars[BAR_TYPE_CHUNK])}, file_bars.length: {len(self.bars[BAR_TYPE_FILE])}")
+                call_http_url(f"Bar position is: {position}, Creating bar: {bar_id}, bars.length: {len(self.bars)}, chunk_bars.length: {len(self.bars[BAR_TYPE_CHUNK])}, file_bars.length: {len(self.bars[BAR_TYPE_FILE])}")
                 bar = tqdm( # bar = PausableTqdm(
                     total=total,
                     desc=desc,
@@ -175,11 +141,11 @@ class TqdmManager:
             elif bar_type == BAR_TYPE_FILE:
                 # for each_bar_type, each_bar in self.bar_ids.values():
                 #     if each_bar_type == BAR_TYPE_CHUNK:
-                #         self.call_http_url(f"Reordering the CHUNK bars at the bar positon: {each_bar.position}")
+                #         call_http_url(f"Reordering the CHUNK bars at the bar positon: {each_bar.position}")
                 #         each_bar.position = each_bar.position + 1
                 #         each_bar.refresh()
                 
-                self.call_http_url(f"Bar position is: {position}, Creating bar: {bar_id}, bars.length: {len(self.bars)}, chunk_bars.length: {len(self.bars[BAR_TYPE_CHUNK])},file_bars.length: {len(self.bars[BAR_TYPE_FILE])}")
+                call_http_url(f"Bar position is: {position}, Creating bar: {bar_id}, bars.length: {len(self.bars)}, chunk_bars.length: {len(self.bars[BAR_TYPE_CHUNK])},file_bars.length: {len(self.bars[BAR_TYPE_FILE])}")
                 bar = tqdm( # bar = PausableTqdm(
                     total=total,
                     desc=desc,
@@ -219,7 +185,7 @@ class TqdmManager:
                 elapsed = time.time() - self.start_times.get(bar_id, time.time())
                 est_total = elapsed * (bar.total / float(current))
                 eta = max(0.0, est_total - elapsed)
-                postfix = f"ETA {self._format_time(eta)}"
+                postfix = f"ETA {format_time(eta)}"
 
             if postfix:
                 bar.set_postfix_str(postfix)
@@ -231,8 +197,8 @@ class TqdmManager:
             bar_type, bar = self.bar_ids[bar_id]
 
             if bar_type == BAR_TYPE_CHUNK:
-                total = self._format_size(bar.total)
-                elapsed = self._format_elapsed(bar.format_dict["elapsed"])
+                total = format_size(bar.total)
+                elapsed = format_elapsed(bar.format_dict["elapsed"])
 
                 postfix = f"size={total} • elapsed={elapsed}"
                 bar.bar_format = f"{{desc}} ✓ {postfix}"
@@ -241,8 +207,8 @@ class TqdmManager:
                 # bar.close()
                 # del self.bar_ids[bar_id]
 
-                total = self._format_size(bar.total)
-                elapsed = self._format_elapsed(bar.format_dict["elapsed"])
+                total = format_size(bar.total)
+                elapsed = format_elapsed(bar.format_dict["elapsed"])
 
                 postfix = f"size={total} • elapsed={elapsed}"
                 bar.bar_format = f"{{desc}} ✓ {postfix}"
@@ -265,6 +231,7 @@ class TqdmManager:
 
             # self._refresh_positions()
 
+# region Queue creation
     # -------------------------- Event-queue interface --------------------------
     def attach_event_queue(self, q: "mp.Queue"):
         """
@@ -342,3 +309,4 @@ def get_tqdm_manager():
     if _instance is None:
         _instance = TqdmManager(base_position=0)
     return _instance
+# endregion
