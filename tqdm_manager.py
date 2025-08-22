@@ -3,19 +3,37 @@ import threading
 import time
 import requests
 from queue import Empty
+from enum import Enum, auto
 import multiprocessing as mp
 from tqdm import tqdm
+from dataclasses import dataclass
 from helpers.format_elapsed import format_elapsed
 from helpers.format_size import format_size
 from helpers.format_time import format_time
 from helpers.clear_terminal_below_cursor import clear_terminal_below_cursor
 from config import MAX_WORKERS
-
 from helpers.call_http_url import call_http_url
 
-BAR_TYPE_OTHER = "other"
-BAR_TYPE_FILE = "file"
-BAR_TYPE_CHUNK = "chunk"
+class BAR_TYPE(Enum):
+    OTHER = 1
+    FILE = 2
+    FILE_WAITING = 3
+    CHUNK_DIVIDER = 4
+    CHUNK = 5
+
+@dataclass
+class BarEntry:
+    bar_id: str
+    bar_type: BAR_TYPE
+    bar: tqdm
+    total: float | None = None
+    metadata: dict | None = None
+    desc: str | None = None
+    position: int | None = None
+    start_time: float | None = None
+    last_value: float | int | None = None
+    bar_format: str | None = None
+    is_done: bool = False
 
 _instance = None
 
@@ -23,7 +41,8 @@ class TqdmManager:
     def change_state_of_bars(self, disable):
         with self.lock:
             for bar_list in self.bars.values():
-                for _, bar in bar_list:
+                for _, entry in bar_list:
+                    bar = entry.bar
                     bar.disable = disable
                     bar.refresh()
             clear_terminal_below_cursor() if disable else None
@@ -32,11 +51,25 @@ class TqdmManager:
         self.change_state_of_bars(True)
         self.change_state_of_bars(False)
 
+    def remove_bar_from_gui(self, bar):
+        with tqdm.get_lock():
+            bar.clear()
+            bar.refresh()
+            bar.close()
+            del bar
+            clear_terminal_below_cursor()
+    
+    def remove_bar_and_get_bar_entry(self, bar_id, bar_type = None, isRefreshBars = True):
+        res = self.get_or_pop_bar(bar_id, bar_type, pop=True)
+        bar_entry = res[2]
+        bar = bar_entry.bar
+        self.remove_bar_from_gui(bar)
+        self.refresh_bars() if isRefreshBars else None
+        return bar_entry
+
     def __init__(self, base_position=0):
         self.lock = threading.RLock()
-        self.bars = {BAR_TYPE_OTHER: [], BAR_TYPE_FILE: [], BAR_TYPE_CHUNK: []}
-        self.start_times = {}
-        self.last_values = {}
+        self.bars = {bar_type: [] for bar_type in BAR_TYPE}
         self.position_base = base_position
         self._event_thread = None
         self._event_queue = None
@@ -48,181 +81,241 @@ class TqdmManager:
         return any(bar_id == existing_id for bars in self.bars.values() for existing_id, _ in bars)
 
     def get_or_pop_bar(self, bar_id, bar_type=None, pop=False):
-        if bar_type is not None:
-            bar_list = self.bars.get(bar_type, [])
-            for i, (existing_id, bar) in enumerate(bar_list):
+        bar_sources = (
+            [(bar_type, self.bars.get(bar_type))]
+            if bar_type is not None
+            else self.bars.items()
+        )
+
+        for bt, bar_list in bar_sources:
+            for i, (existing_id, entry) in enumerate(bar_list):
                 if existing_id == bar_id:
-                    if pop:
-                        bar_id_, bar_ = bar_list.pop(i)
-                    else:
-                        bar_id_, bar_ = bar_list[i]
-                    return bar_type, bar_id_, bar_
-        else:
-            for bt, bar_list in self.bars.items():
-                for i, (existing_id, bar) in enumerate(bar_list):
-                    if existing_id == bar_id:
-                        if pop:
-                            bar_id_, bar_ = bar_list.pop(i)
-                        else:
-                            bar_id_, bar_ = bar_list[i]
-                        return bt, bar_id_, bar_
+                    bar_id_, entry_ = bar_list.pop(i) if pop else (existing_id, entry)
+                    return bt, bar_id_, entry_
+
         return None
 
     def _generate_desc(self, bar_type, bar_id, metadata):
-        if bar_type == BAR_TYPE_CHUNK:
+        if bar_type == BAR_TYPE.CHUNK:
             return f"{bar_id[:5].capitalize()} {bar_id[5:]}"
-        elif bar_type == BAR_TYPE_FILE:
+        elif bar_type == BAR_TYPE.FILE:
             slot_no = metadata.get("slot_no")
             crf = f"{metadata.get('crf'):02}"
             fname = metadata.get("filename", metadata.get("label", "file"))
             return f"Slot {slot_no} | [{crf}] {fname}" if slot_no and crf else f"{fname}"
-        elif bar_type == BAR_TYPE_OTHER:
+        elif bar_type == BAR_TYPE.FILE_WAITING:
+            slot_no = metadata.get("slot_no")
+            return f"Slot {slot_no:02} | Waiting..."
+        elif bar_type == BAR_TYPE.OTHER:
             return metadata.get("label", bar_id)
         return bar_id
 
     def create_slot_bar(self, slot_no):
-        bar = tqdm(
-            total=1,
-            desc=f"Slot {slot_no:02} | Waiting...",
-            position=slot_no - 1,
-            dynamic_ncols=True,
-            bar_format=("{desc}"),
-            leave=False
-        )
-        bar.update(1)
-        self.bars[BAR_TYPE_FILE].append((f"waiting_file_slot_{slot_no:02}", bar))
+        msg = {
+            "bar_type": BAR_TYPE.FILE_WAITING,
+            "bar_id": f"waiting_file_slot_{slot_no:02}",
+            "metadata": {"slot_no": f"{slot_no:02}"},
+        }
+        self.create_bar(msg)
 
     def create_slot_bars(self, no_of_bars):
         with self.lock:
             for index in range(1, no_of_bars + 1):
                 self.create_slot_bar(index)
 
-    def _get_position(self, bar_type):
+    def _get_position(self, bar_type, bar_id = None):
         pos = self.position_base
-        if bar_type == BAR_TYPE_FILE:
+        if bar_type == BAR_TYPE.FILE:
             return None
-        if bar_type == BAR_TYPE_CHUNK:
-            pos += 1 + len(self.bars[BAR_TYPE_CHUNK])
+        if bar_type == BAR_TYPE.FILE_WAITING:
+            return int(bar_id[-2:]) - 1
+        if bar_type == BAR_TYPE.CHUNK_DIVIDER:
+            return self.position_base + 1
+        if bar_type == BAR_TYPE.CHUNK:
+            pos = (self.bars[BAR_TYPE.CHUNK][-1][1].position + 1
+                    if self.bars[BAR_TYPE.CHUNK]
+                    else self.position_base + 2)
         return pos
 
-    def create_bar(self, bar_type, bar_id, total, metadata=None, unit='it', unit_scale=False, unit_divisor=1):
+    def _snapshot_bar_state(self, bar):
+        try:
+            current_n = getattr(bar, "n", 0)
+        except Exception:
+            current_n = 0
+        return {"n": max(0, int(current_n))}
+
+    def shift_pos(self, bar_id, new_position, bar_entry_keep):
+        bar_type = bar_entry_keep.bar_type
+
+        # get & remove the old bar
+        self.remove_bar_and_get_bar_entry(bar_id, bar_type)
+        state = self._snapshot_bar_state(bar_entry_keep.bar) if bar_entry_keep.bar else {"n": 0}
+        
+        if bar_type == BAR_TYPE.CHUNK:
+            bar = self._create_tqdm_bar(bar_type, bar_id, bar_entry_keep.total, bar_entry_keep.desc, new_position, None)
+            if bar_entry_keep.is_done:
+                bar.bar_format = bar_entry_keep.bar_format
+                bar.refresh()
+        elif bar_type == BAR_TYPE.FILE:
+            pass
+            # FILE bars keep position = slot index - 1; new_position ignored for FILE
+            # position = int(bar_id[-2:])
+            # bar = tqdm(
+            #     total=params.get("total", 0),
+            #     desc=desc,
+            #     position=position - 1,
+            #     dynamic_ncols=True,
+            #     unit=params.get("unit", "it"),
+            #     unit_scale=params.get("unit_scale", False),
+            #     unit_divisor=params.get("unit_divisor", 1),
+            #     bar_format="{l_bar}{bar}| {n_fmt}{unit}/{total_fmt}{unit} [{elapsed}<{remaining}, {rate_fmt}{postfix}]",
+            #     leave=False
+            # )
+            # bar.update(0)
+        else:
+            # OTHER bars are not being repositioned by the chunk limiter logic
+            return None
+
+        if not bar_entry_keep.is_done:
+            # restore state
+            n = state.get("n", 0)
+            bar.update(n)
+        
+        self.refresh_bars()
+
+    def _enforce_chunk_bar_limit(self):
+        bar_list = self.bars[BAR_TYPE.CHUNK]
+        if not bar_list:
+            return
+
+        first_chunk_bar = bar_list[0][1].bar
+        first_chunk_bar_positon = abs(getattr(
+            first_chunk_bar, "pos", 
+            getattr(first_chunk_bar, "_pos", self.position_base + 1)
+        ))
+
+        # Step 1: Identify candidates for removal (✓ in description)
+        bars_to_remove = [pair for pair in bar_list if " ✓ " in pair[1].bar.bar_format]
+        if not bars_to_remove:
+            return
+
+        # Step 2: Remove only the required number
+        no_of_bars_to_removed = len(bar_list) - self.chunk_bar_limit
+        for bar_id_rm, _ in bars_to_remove[:no_of_bars_to_removed]:
+            self.remove_bar_and_get_bar_entry(bar_id_rm)
+
+        # Step 3: Recreate remaining chunk bars in contiguous order
+        if self.bars[BAR_TYPE.CHUNK]:
+            remaining = [pair[0] for pair in self.bars[BAR_TYPE.CHUNK]]
+            for i, bar_id_keep in enumerate(remaining):
+                new_pos = first_chunk_bar_positon + i
+                bar_entry_keep = self.get_or_pop_bar(bar_id_keep, pop=False)[2]
+                self.shift_pos(bar_id_keep, new_pos, bar_entry_keep)
+
+    def _create_tqdm_bar(self, bar_type, bar_id, total=None, desc=None, position=None, metadata=None):
+        if bar_type == BAR_TYPE.CHUNK:
+            if not self.bar_id_exists("chunk_divider"):
+                bar = self._create_tqdm_bar(BAR_TYPE.CHUNK_DIVIDER, "chunk_divider")
+        elif bar_type == BAR_TYPE.FILE:
+            waiting_key = f"waiting_{bar_id}"
+            if self.bar_id_exists(waiting_key):
+                self.remove_bar_and_get_bar_entry(waiting_key)        
+
+        if bar_type == BAR_TYPE.CHUNK or bar_type == BAR_TYPE.FILE:
+            total=total
+            desc=desc
+            position = (
+                position
+                if position else
+                self._get_position(bar_type)
+                if bar_type == BAR_TYPE.CHUNK else 
+                (int(bar_id[-2:]) - 1) 
+                if bar_type == BAR_TYPE.FILE else 0
+            )
+            bar_format="{l_bar}{bar}| {n_fmt}{unit}/{total_fmt}{unit} [{elapsed}<{remaining}, {rate_fmt}{postfix}]"
+            ascii=None
+            unit="B"
+            unit_scale=True
+            unit_divisor=1024
+        elif bar_type == BAR_TYPE.FILE_WAITING or bar_type == BAR_TYPE.CHUNK_DIVIDER:
+            total=1
+            desc=desc if bar_type == BAR_TYPE.FILE_WAITING else None
+            position = (
+                position
+                if position else
+                self._get_position(bar_type, bar_id)
+            )
+            bar_format="{desc}" if bar_type == BAR_TYPE.FILE_WAITING else "{bar}"
+            ascii=None if bar_type == BAR_TYPE.FILE_WAITING else " ="         
+            unit=None
+            unit_scale=None
+            unit_divisor=None
+        else:
+            raise ValueError("Unsupported bar type")
+
+        bar = tqdm(
+            total=total,
+            desc=desc,
+            position=position,
+            bar_format=bar_format,
+            ascii=ascii,
+            unit=unit or "",
+            unit_scale=False if unit_scale is None else bool(unit_scale),
+            unit_divisor=1000 if unit_divisor is None else int(unit_divisor),
+            dynamic_ncols=True,
+            leave=False
+        )
+        bar.update(1 if bar_type == BAR_TYPE.CHUNK_DIVIDER or bar_type == BAR_TYPE.FILE_WAITING else 0)
+
+        entry = BarEntry(
+            bar_id=bar_id,
+            bar_type=bar_type,
+            total=total,
+            metadata=metadata,
+            desc=desc,
+            bar=bar,
+            position=position,
+            start_time=time.time(),
+            last_value=0,
+            bar_format=bar_format,
+        )
+        self.bars[bar_type].append((bar_id, entry))
+        return bar
+
+    def create_bar(self, msg):
         with self.lock:
+            bar_type = msg["bar_type"]
+            bar_id = msg["bar_id"]
+            total = msg.get("total")
+            metadata = msg.get("metadata")
+
             if self.bar_id_exists(bar_id):
                 return
 
-            position = self._get_position(bar_type)
-            desc = self._generate_desc(bar_type, bar_id, metadata or {})
+            desc = self._generate_desc(bar_type, bar_id, metadata)
+            self._create_tqdm_bar(bar_type, bar_id, total, desc, None, metadata)
 
-            if bar_type == BAR_TYPE_CHUNK:
-                bar = self._create_chunk_bar(bar_id, total, position, unit, unit_scale, unit_divisor, desc)
-            elif bar_type == BAR_TYPE_FILE:
-                bar = self._create_file_bar(bar_id, total, unit, unit_scale, unit_divisor, desc)
-
-            self.bars[bar_type].append((bar_id, bar))
-            self.start_times[bar_id] = time.time()
-            self.last_values[bar_id] = 0
-
-            # call_http_url(f"CHUNK BARS CHECK: {len(self.bars[BAR_TYPE_CHUNK])} > {self.chunk_bar_limit}")
-            if len(self.bars[BAR_TYPE_CHUNK]) > (self.chunk_bar_limit + 1): # +1 is for divider
-                # call_http_url(f"Inside repositioner")
-                no_of_bars_to_removed = len(self.bars[BAR_TYPE_CHUNK]) - self.chunk_bar_limit
-                call_http_url(f"no_of_bars_to_removed: {no_of_bars_to_removed}")
-                bar_list = self.bars[BAR_TYPE_CHUNK]
-                first_chunk_bar_positon = abs(getattr(bar_list[1][1], "pos", getattr(bar_list[1][1], "_pos", "no pos attr")))
-
-                call_http_url(f"first_chunk_bar_positon: {first_chunk_bar_positon}")
-
-                # Step 1: Identify candidates for removal (those with " ✓ " in description)
-                bars_to_remove = [bar for bar in bar_list if " ✓ " in bar[1].description]
-
-                # Step 2: Remove only the required number
-                for bar in bars_to_remove[:no_of_bars_to_removed]:
-                    bar.close()
-                    bar_list.remove(bar)
-
-                # Step 3: Reindex remaining bars in incrementing order
-                if bar_list:  # ensure not empty
-                    for i, (bar_id, bar) in enumerate(bar_list):
-                        bar.pos = first_chunk_bar_positon + i
-                        bar.position = first_chunk_bar_positon + i
-
+            if len(self.bars[BAR_TYPE.CHUNK]) > self.chunk_bar_limit:
+                self._enforce_chunk_bar_limit()
             self.refresh_bars()
-    
-    def _create_chunk_bar(self, bar_id, total, position, unit, unit_scale, unit_divisor, desc):
-        if not self.bar_id_exists("divider"):
-            self._create_divider(position)
-            position += 1
-
-        bar = tqdm(
-            total=total,
-            desc=desc,
-            position=position,
-            dynamic_ncols=True,
-            unit=unit,
-            unit_scale=unit_scale,
-            unit_divisor=unit_divisor,
-            bar_format="{l_bar}{bar}| {n_fmt}{unit}/{total_fmt}{unit} [{elapsed}<{remaining}, {rate_fmt}{postfix}]",
-            leave=False
-        )
-        bar.update(0)
-        return bar
-
-    def _create_divider(self, position):
-        divider = tqdm(
-            total=1,
-            bar_format="{bar}",
-            position=position,
-            dynamic_ncols=True,
-            ascii=" =",
-            leave=False
-        )
-        divider.update(1)
-        self.bars[BAR_TYPE_CHUNK].append(("divider", divider))
-
-    def _create_file_bar(self, bar_id, total, unit, unit_scale, unit_divisor, desc):
-        waiting_key = f"waiting_{bar_id}"
-        if self.bar_id_exists(waiting_key):
-            self._clear_waiting_bar(waiting_key)
-
-        position = int(bar_id[-2:])
-        bar = tqdm(
-            total=total,
-            desc=desc,
-            position=position - 1,
-            dynamic_ncols=True,
-            unit=unit,
-            unit_scale=unit_scale,
-            unit_divisor=unit_divisor,
-            bar_format="{l_bar}{bar}| {n_fmt}{unit}/{total_fmt}{unit} [{elapsed}<{remaining}, {rate_fmt}{postfix}]",
-            leave=False
-        )
-        bar.update(0)
-        return bar
-
-    def _clear_waiting_bar(self, waiting_key):
-        _, _, wait_bar = self.get_or_pop_bar(waiting_key, pop = True)
-        with tqdm.get_lock():
-            wait_bar.clear()
-            wait_bar.refresh()
-            wait_bar.close()
-            del wait_bar
-            clear_terminal_below_cursor()
 
     def progress(self, bar_id, current, show_eta=True):
         with self.lock:
             if not self.bar_id_exists(bar_id):
                 return
-            _, _, bar = self.get_or_pop_bar(bar_id)
-            last = self.last_values.get(bar_id, 0)
+            _, _, entry = self.get_or_pop_bar(bar_id)
+            bar = entry.bar
+
+            last = entry.last_value or 0
             delta = current - last
-            self.last_values[bar_id] = current
+            entry.last_value = current
 
             if delta > 0:
                 bar.update(delta)
 
             postfix = ""
             if show_eta and bar.total and current > 0:
-                elapsed = time.time() - self.start_times.get(bar_id, time.time())
+                elapsed = time.time() - entry.start_time or time.time()
                 est_total = elapsed * (bar.total / float(current))
                 eta = max(0.0, est_total - elapsed)
                 postfix = f"ETA {format_time(eta)}"
@@ -234,9 +327,10 @@ class TqdmManager:
         with self.lock:
             if not self.bar_id_exists(bar_id):
                 return
-            bar_type, _, bar = self.get_or_pop_bar(bar_id)
+            bar_type, _, entry = self.get_or_pop_bar(bar_id)
+            bar = entry.bar
 
-            if bar_type == BAR_TYPE_CHUNK:
+            if bar_type == BAR_TYPE.CHUNK:
                 total = format_size(bar.total)
                 elapsed = format_elapsed(bar.format_dict["elapsed"])
 
@@ -244,18 +338,12 @@ class TqdmManager:
                 bar.bar_format = f"{{desc}} ✓ {postfix}"
                 bar.refresh()
 
-                # Cleanup
-                self.start_times.pop(bar_id, None)
-                self.last_values.pop(bar_id, None)
-                self.refresh_bars()
-            elif bar_type == BAR_TYPE_FILE:
-                bar.close()
+                entry.bar_format = bar.bar_format
+            elif bar_type == BAR_TYPE.FILE:
+                self.remove_bar_and_get_bar_entry(bar_id, isRefreshBars=False)
                 self.create_slot_bar(int(bar_id[-2:]))
-                self.get_or_pop_bar(bar_id, pop = True)
-                # Cleanup
-                self.start_times.pop(bar_id, None)
-                self.last_values.pop(bar_id, None)
-                self.refresh_bars()
+
+            self.refresh_bars()
 
 # region Queue creation
     # -------------------------- Event-queue interface --------------------------
@@ -283,15 +371,7 @@ class TqdmManager:
             try:
                 op = msg.get("op")
                 if op == "create":
-                    self.create_bar(
-                        bar_type=msg["bar_type"],
-                        bar_id=msg["bar_id"],
-                        total=msg.get("total", 0),
-                        metadata=msg.get("metadata", {}),
-                        unit=msg.get("unit", "it"),
-                        unit_scale=msg.get("unit_scale", False),
-                        unit_divisor=msg.get("unit_divisor", 1),
-                    )
+                    self.create_bar(msg)
                 elif op == "update":
                     self.progress(msg["bar_id"], msg["current"])
                 elif op == "finish":
@@ -299,7 +379,7 @@ class TqdmManager:
                 elif op == "close_all":
                     # Optional: close all file bars (e.g., on shutdown)
                     for bar_list in self.bars.values():
-                        for bar_id, _ in bar_list:
+                        for bar_id, _ in list(bar_list):
                             self.finish_bar(bar_id)
                 else:
                     # Unknown op; ignore
