@@ -13,7 +13,7 @@ from helpers.call_http_url import call_http_url
 from clazz.JobManager import JobManager
 from includes.cleanup_working_folders import cleanup_working_folders
 from includes.move_logs_to_central_output import move_logs_to_central_output
-from tqdm_manager import get_tqdm_manager, BAR_TYPE_CHUNK, create_event_queue
+from tqdm_manager import get_tqdm_manager, get_event_queue, BAR_TYPE
 
 def _restore():
     try:
@@ -36,30 +36,28 @@ def main():
     log(f"Starting AV1 job processor on {MACHINE_ID}")
 
     completed_once = set()
-    event_queue = create_event_queue()
-    # if event_queue is not None:
+    created_bars = set()
+    last_progress = {}
     
     tqdm_manager = get_tqdm_manager()
-    tqdm_manager.attach_event_queue(event_queue)
+    event_queue = get_event_queue()
     
-    job_manager = JobManager(progress_queue=event_queue)
+    job_manager = JobManager()
     job_manager.start()
-    # tqdm_manager.refresh_bars()
     
     try:
         while True:
             # Create bars for newly discovered chunks
             for chunk_name, total_bytes in list(job_manager.chunk_totals.items()):
-                event_queue.put({
-                    "op": "create",
-                    "bar_type": "chunk",
-                    "bar_id": chunk_name,
-                    "total": total_bytes,
-                    "metadata": {},
-                    "unit": "B",
-                    "unit_scale": True,
-                    "unit_divisor": 1024
-                })
+                if chunk_name not in created_bars:
+                    event_queue.put({
+                        "op": "create",
+                        "bar_type": BAR_TYPE.CHUNK,
+                        "bar_id": chunk_name,
+                        "total": total_bytes,
+                        "metadata": {}
+                    })
+                    created_bars.add(chunk_name)
 
             # Update progress
             for chunk_name in list(job_manager.chunk_progress.keys()):
@@ -67,11 +65,13 @@ def main():
                     chunk_progress_value = job_manager.chunk_progress[chunk_name].value
                 except KeyError:
                     continue
-                event_queue.put({
-                    "op": "update",
-                    "bar_id":chunk_name,
-                    "current": chunk_progress_value
-                })
+                if last_progress.get(chunk_name) != chunk_progress_value:
+                    event_queue.put({
+                        "op": "update",
+                        "bar_id": chunk_name,
+                        "current": chunk_progress_value
+                    })
+                    last_progress[chunk_name] = chunk_progress_value  # cache it
 
                 if chunk_progress_value >= job_manager.chunk_totals.get(chunk_name, 0) and chunk_name not in completed_once:
                     completed_once.add(chunk_name)

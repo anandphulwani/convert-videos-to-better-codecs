@@ -36,13 +36,14 @@ class BarEntry:
     is_done: bool = False
 
 _instance = None
+_event_queue = None
 
 class TqdmManager:
     def change_state_of_bars(self, disable):
         with self.lock:
             for bar_list in self.bars.values():
-                for _, entry in bar_list:
-                    bar = entry.bar
+                for _, bar_entry in bar_list:
+                    bar = bar_entry.bar
                     bar.disable = disable
                     bar.refresh()
             clear_terminal_below_cursor() if disable else None
@@ -88,10 +89,10 @@ class TqdmManager:
         )
 
         for bt, bar_list in bar_sources:
-            for i, (existing_id, entry) in enumerate(bar_list):
+            for i, (existing_id, bar_entry) in enumerate(bar_list):
                 if existing_id == bar_id:
-                    bar_id_, entry_ = bar_list.pop(i) if pop else (existing_id, entry)
-                    return bt, bar_id_, entry_
+                    bar_id_, bar_entry_ = bar_list.pop(i) if pop else (existing_id, bar_entry)
+                    return bt, bar_id_, bar_entry_
 
         return None
 
@@ -157,24 +158,14 @@ class TqdmManager:
                 bar.bar_format = bar_entry_keep.bar_format
                 bar.refresh()
         elif bar_type == BAR_TYPE.FILE:
-            pass
-            # FILE bars keep position = slot index - 1; new_position ignored for FILE
-            # position = int(bar_id[-2:])
-            # bar = tqdm(
-            #     total=params.get("total", 0),
-            #     desc=desc,
-            #     position=position - 1,
-            #     dynamic_ncols=True,
-            #     unit=params.get("unit", "it"),
-            #     unit_scale=params.get("unit_scale", False),
-            #     unit_divisor=params.get("unit_divisor", 1),
-            #     bar_format="{l_bar}{bar}| {n_fmt}{unit}/{total_fmt}{unit} [{elapsed}<{remaining}, {rate_fmt}{postfix}]",
-            #     leave=False
-            # )
-            # bar.update(0)
-        else:
-            # OTHER bars are not being repositioned by the chunk limiter logic
-            return None
+            bar = self._create_tqdm_bar(bar_type, bar_id, bar_entry_keep.total, bar_entry_keep.desc, new_position, None)
+            bar.refresh()
+        elif bar_type == BAR_TYPE.OTHER:
+            bar = self._create_tqdm_bar(bar_type, bar_id, bar_entry_keep.total, bar_entry_keep.desc, new_position, None)
+            bar.refresh()
+        elif bar_type == BAR_TYPE.FILE_WAITING or bar_type == BAR_TYPE.CHUNK_DIVIDER:
+            bar = self._create_tqdm_bar(bar_type, bar_id, bar_entry_keep.total, bar_entry_keep.desc, new_position, None)
+            bar.refresh()
 
         if not bar_entry_keep.is_done:
             # restore state
@@ -182,6 +173,23 @@ class TqdmManager:
             bar.update(n)
         
         self.refresh_bars()
+
+    def shift_all_bars_one_step_down(self):
+        with self.lock:
+            for bar_list in self.bars.values():
+                for bar_id, bar_entry in bar_list:
+                    self.shift_pos(bar_id, bar_entry.positon + 1, bar_entry)
+
+    def shift_all_bars_one_step_up(self):
+        with self.lock:
+            for bar_list in self.bars.values():
+                for bar_id, bar_entry in bar_list:
+                    if bar_entry.position < 1:
+                        raise ValueError(
+                            f"Invalid position for bar_id={bar_id}: {bar_entry.position}. "
+                            "Position must be >= 1 before shifting."
+                        )
+                    self.shift_pos(bar_id, bar_entry.position - 1, bar_entry)
 
     def _enforce_chunk_bar_limit(self):
         bar_list = self.bars[BAR_TYPE.CHUNK]
@@ -267,7 +275,7 @@ class TqdmManager:
         )
         bar.update(1 if bar_type == BAR_TYPE.CHUNK_DIVIDER or bar_type == BAR_TYPE.FILE_WAITING else 0)
 
-        entry = BarEntry(
+        bar_entry = BarEntry(
             bar_id=bar_id,
             bar_type=bar_type,
             total=total,
@@ -279,7 +287,7 @@ class TqdmManager:
             last_value=0,
             bar_format=bar_format,
         )
-        self.bars[bar_type].append((bar_id, entry))
+        self.bars[bar_type].append((bar_id, bar_entry))
         return bar
 
     def create_bar(self, msg):
@@ -303,19 +311,19 @@ class TqdmManager:
         with self.lock:
             if not self.bar_id_exists(bar_id):
                 return
-            _, _, entry = self.get_or_pop_bar(bar_id)
-            bar = entry.bar
+            _, _, bar_entry = self.get_or_pop_bar(bar_id)
+            bar = bar_entry.bar
 
-            last = entry.last_value or 0
+            last = bar_entry.last_value or 0
             delta = current - last
-            entry.last_value = current
+            bar_entry.last_value = current
 
             if delta > 0:
                 bar.update(delta)
 
             postfix = ""
             if show_eta and bar.total and current > 0:
-                elapsed = time.time() - entry.start_time or time.time()
+                elapsed = time.time() - bar_entry.start_time or time.time()
                 est_total = elapsed * (bar.total / float(current))
                 eta = max(0.0, est_total - elapsed)
                 postfix = f"ETA {format_time(eta)}"
@@ -327,8 +335,8 @@ class TqdmManager:
         with self.lock:
             if not self.bar_id_exists(bar_id):
                 return
-            bar_type, _, entry = self.get_or_pop_bar(bar_id)
-            bar = entry.bar
+            bar_type, _, bar_entry = self.get_or_pop_bar(bar_id)
+            bar = bar_entry.bar
 
             if bar_type == BAR_TYPE.CHUNK:
                 total = format_size(bar.total)
@@ -338,7 +346,7 @@ class TqdmManager:
                 bar.bar_format = f"{{desc}} ✓ {postfix}"
                 bar.refresh()
 
-                entry.bar_format = bar.bar_format
+                bar_entry.bar_format = bar.bar_format
             elif bar_type == BAR_TYPE.FILE:
                 self.remove_bar_and_get_bar_entry(bar_id, isRefreshBars=False)
                 self.create_slot_bar(int(bar_id[-2:]))
@@ -412,9 +420,15 @@ def create_event_queue(ctx: "mp.context.BaseContext" = None) -> "mp.Queue":
     return ctx.Queue()
 
 def get_tqdm_manager():
-    global _instance
+    global _instance, _event_queue
     if _instance is None:
         _instance = TqdmManager(base_position=6)
+    if _event_queue is None:
+        _event_queue = create_event_queue()
+        _instance.attach_event_queue(_event_queue)
     return _instance
+
+def get_event_queue():
+    return _event_queue
 # endregion
 
