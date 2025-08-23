@@ -10,6 +10,7 @@ from helpers.format_elapsed import format_elapsed
 from helpers.remove_topmost_dir import remove_topmost_dir
 from config import TMP_OUTPUT_ROOT, FINAL_OUTPUT_ROOT, TMP_PROCESSING
 from helpers.logging_utils import log
+from tqdm_manager import get_event_queue, BAR_TYPE
 
 def encode_file(
     src_file,
@@ -20,8 +21,8 @@ def encode_file(
     process_registry=None,
     chunk_progress=None,
     chunk_key=None,
-    progress_queue=None,
 ):
+    event_queue=get_event_queue()
     tmp_processing_dir = TMP_PROCESSING.format(crf)
     tmp_output_dir = TMP_OUTPUT_ROOT.format(crf)
     final_output_dir = FINAL_OUTPUT_ROOT.format(crf)
@@ -51,16 +52,13 @@ def encode_file(
     os.makedirs(os.path.dirname(tmp_processing_file), exist_ok=True)
 
     # Create UI bar in main process via event
-    if progress_queue is not None:
-        progress_queue.put({
+    if event_queue is not None:
+        event_queue.put({
             "op": "create",
-            "bar_type": "file",
+            "bar_type": BAR_TYPE.FILE,
             "bar_id": f"file_slot_{slot_idx:02}",
             "total": file_size,
-            "metadata": {"filename": os.path.basename(src_file), "slot_no": f"{slot_idx:02}", "crf": crf},
-            "unit": "B",
-            "unit_scale": True,
-            "unit_divisor": 1024
+            "metadata": {"filename": os.path.basename(src_file), "slot_no": f"{slot_idx:02}", "crf": crf}
         })
 
     if platform.system() == "Windows":
@@ -97,9 +95,9 @@ def encode_file(
                 if chunk_progress is not None and chunk_key is not None:
                     # per-chunk live byte progress
                     chunk_progress[chunk_key].value += delta_bytes
-                    if progress_queue is not None:
+                    if event_queue is not None:
                         # Send ABSOLUTE current value; manager computes delta
-                        progress_queue.put({
+                        event_queue.put({
                             "op": "update",
                             "bar_id": f"file_slot_{slot_idx:02}",
                             "current": current_progress
@@ -114,14 +112,14 @@ def encode_file(
                     # per-chunk live byte progress
                     chunk_progress[chunk_key].value += delta_bytes
                 last_progress = file_size
-                if progress_queue is not None:
-                    progress_queue.put({
+                if event_queue is not None:
+                    event_queue.put({
                         "op": "update",
                         "bar_id": f"file_slot_{slot_idx:02}",
                         "current": file_size
                     })
-            if progress_queue is not None:
-                progress_queue.put({"op": "finish", "bar_id": f"file_slot_{slot_idx:02}"})
+            if event_queue is not None:
+                event_queue.put({"op": "finish", "bar_id": f"file_slot_{slot_idx:02}"})
 
     stdout, stderr = process.communicate()
 
@@ -149,8 +147,8 @@ def encode_file(
             process_registry.pop(os.getpid(), None)
 
         # Close the UI bar if it exists
-        if progress_queue is not None:
-            progress_queue.put({"op": "finish", "bar_id": bar_id})
+        if event_queue is not None:
+            event_queue.put({"op": "finish", "bar_id": f"file_slot_{slot_idx:02}"})
 
         return [src_file, crf, "failed", f"FFmpeg failed for {rel_path} (see log)"]
 

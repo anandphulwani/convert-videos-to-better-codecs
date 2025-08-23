@@ -34,7 +34,7 @@ class EncodingTask:
     chunk: str
 
 class JobManager:
-    def __init__(self, progress_queue=None):
+    def __init__(self):
         self.preload_done = threading.Event()
         self.max_workers = MAX_WORKERS
         self.crf_values = CRF_VALUES
@@ -63,9 +63,6 @@ class JobManager:
         self.chunk_totals = self.manager.dict()     # {chunk_name: total_bytes}
         self.chunk_progress = self.manager.dict()   # {chunk_name: Value('q')}
 
-        # Progress event queue for UI (lives in main process)
-        self.progress_queue = progress_queue
-
     def start(self):
         # Queue any pre-existing inputs first so workers won’t starve on startup.
         self._preload_existing_input_chunks()
@@ -81,7 +78,7 @@ class JobManager:
     def _start_workers(self):
         # One dedicated UI "slot" per worker
         for slot_idx in range(1, self.max_workers + 1):
-            p = Process(target=self._worker_loop, args=(slot_idx, self.progress_queue), daemon=True)
+            p = Process(target=self._worker_loop, args=(slot_idx,), daemon=True)
             p.start()
             self.processes.append(p)
 
@@ -124,7 +121,7 @@ class JobManager:
         with self.total_tasks.get_lock():
             self.total_tasks.value += 1
 
-    def _worker_loop(self, slot_idx: int, progress_queue):
+    def _worker_loop(self, slot_idx: int):
         while not self.stop_event.is_set():
             try:
                 task = self.task_queue.get(timeout=1)
@@ -147,7 +144,6 @@ class JobManager:
                     process_registry=self.process_registry,
                     chunk_progress=self.chunk_progress,
                     chunk_key=task.chunk,
-                    progress_queue=progress_queue,
                 )
                 self._handle_encoding_result(task, result)
             except Exception as e:
