@@ -246,7 +246,7 @@ class TqdmManager:
                 bar_entry_keep = self.get_or_pop_bar(bar_id_keep, pop=False)[2]
                 self.shift_pos(bar_id_keep, new_pos, bar_entry_keep)
 
-    def _create_tqdm_bar(self, bar_type, bar_id, total=None, desc=None, position=None, metadata=None, is_done=False, done_format=None):
+    def _create_tqdm_bar(self, bar_type, bar_id, total=None, desc=None, position=None, metadata={}, is_done=False, done_format=None):
         if bar_type == BAR_TYPE.CHUNK:
             if not self.bar_id_exists("chunk_divider"):
                 bar = self._create_tqdm_bar(BAR_TYPE.CHUNK_DIVIDER, "chunk_divider")
@@ -263,9 +263,9 @@ class TqdmManager:
             )
             bar_format="{l_bar}{bar}| {n_fmt}{unit}/{total_fmt}{unit} [{elapsed}<{remaining}, {rate_fmt}{postfix}]"
             ascii=None
-            unit="B"
-            unit_scale=True
-            unit_divisor=1024
+            unit=metadata.get("unit", "B")
+            unit_scale=metadata.get("unit_scale", True)
+            unit_divisor=metadata.get("unit_divisor", 1024)
         elif bar_type == BAR_TYPE.FILE_WAITING or bar_type == BAR_TYPE.CHUNK_DIVIDER:
             total=1
             desc=desc if bar_type == BAR_TYPE.FILE_WAITING else None
@@ -276,9 +276,9 @@ class TqdmManager:
             )
             bar_format="{desc}" if bar_type == BAR_TYPE.FILE_WAITING else "{bar}"
             ascii=None if bar_type == BAR_TYPE.FILE_WAITING else " ="         
-            unit=""
-            unit_scale=False
-            unit_divisor=1000
+            unit=metadata.get("unit", "")
+            unit_scale=metadata.get("unit_scale", False)
+            unit_divisor=metadata.get("unit_divisor", 1000)
         elif bar_type == BAR_TYPE.OTHER:
             if metadata is None:
                 call_http_url("METADATA IS NONE")
@@ -290,9 +290,9 @@ class TqdmManager:
             )
             bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]"
             ascii=None
-            unit=metadata.get("unit") or "it"
-            unit_scale=metadata.get("unit_scale") or False
-            unit_divisor=metadata.get("unit_divisor") or 1000
+            unit=metadata.get("unit", "it")
+            unit_scale=metadata.get("unit_scale", False)
+            unit_divisor=metadata.get("unit_divisor", 1000)
         else:
             raise ValueError("Unsupported bar type")
 
