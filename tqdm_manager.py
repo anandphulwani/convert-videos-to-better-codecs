@@ -225,7 +225,6 @@ class TqdmManager:
             getattr(first_chunk_bar, "_pos", self.position_base + 1)
         ))
 
-        # call_http_url(f"first_chunk_bar_positon: {first_chunk_bar_positon}")
         # Step 1: Identify candidates for removal (✓ in description)
         bars_to_remove = [pair for pair in bar_list if " ✓ " in pair[1].bar.bar_format]
         if not bars_to_remove:
@@ -233,8 +232,6 @@ class TqdmManager:
 
         # Step 2: Remove only the required number
         no_of_bars_to_removed = len(bar_list) - self.chunk_bar_limit
-        # call_http_url(f"len(bar_list): {len(bar_list)} - self.chunk_bar_limit: {self.chunk_bar_limit}")
-        # call_http_url(f"no_of_bars_to_removed: {no_of_bars_to_removed}")
         for bar_id_rm, _ in bars_to_remove[:no_of_bars_to_removed]:
             self.remove_bar_and_get_bar_entry(bar_id_rm)
 
@@ -280,8 +277,6 @@ class TqdmManager:
             unit_scale=metadata.get("unit_scale", False)
             unit_divisor=metadata.get("unit_divisor", 1000)
         elif bar_type == BAR_TYPE.OTHER:
-            if metadata is None:
-                call_http_url("METADATA IS NONE")
             total=total
             position = (
                 position
