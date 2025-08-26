@@ -313,10 +313,10 @@ class TqdmManager:
         bar_entry = BarEntry(
             bar_id=bar_id,
             bar_type=bar_type,
+            bar=bar,
             total=total,
             metadata=metadata,
             desc=desc,
-            bar=bar,
             position=position,
             start_time=time.time(),
             last_value=0,
