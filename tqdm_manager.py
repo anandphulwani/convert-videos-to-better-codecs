@@ -256,7 +256,6 @@ class TqdmManager:
                 self.remove_bar_and_get_bar_entry(waiting_key)        
 
         if bar_type == BAR_TYPE.CHUNK or bar_type == BAR_TYPE.FILE:
-            ""
             position = (
                 position
                 if position else
