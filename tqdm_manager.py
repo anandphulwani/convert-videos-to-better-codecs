@@ -396,7 +396,7 @@ class TqdmManager:
                 self.remove_bar_and_get_bar_entry(bar_id, isRefreshBars=False)
                 call_http_url(f"Shifting all bars one step up because of: {bar_entry.metadata.get('name')}")
                 self.shift_all_bars_one_step_up()
-
+            bar_entry.is_done=True
             self.refresh_bars()
 
 # region Queue creation
