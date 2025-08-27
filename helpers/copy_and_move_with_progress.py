@@ -4,10 +4,21 @@ from multiprocessing import RLock
 
 from helpers.remove_path import remove_path
 from helpers.remove_empty_dir_upwards import remove_empty_dirs_upwards
+from tqdm_manager import get_event_queue, get_random_value_for_id, BAR_TYPE
 
 _progress_lock = RLock()
 
-def _copy_file(src_file, dst_file):
+def _calculate_total_size(path):
+    """Return the total size of a file or all files within a directory."""
+    if os.path.isfile(path):
+        return os.path.getsize(path)
+    return sum(
+        os.path.getsize(os.path.join(dirpath, f))
+        for dirpath, _, files in os.walk(path)
+        for f in files
+    )
+
+def _copy_file(src_file, dst_file, bar_id, event_queue, copied_bytes_holder):
     """Copy a single file."""
     os.makedirs(os.path.dirname(dst_file), exist_ok=True)
     with open(src_file, 'rb') as fsrc, open(dst_file, 'wb') as fdst:
@@ -16,6 +27,12 @@ def _copy_file(src_file, dst_file):
             if not buf:
                 break
             fdst.write(buf)
+            copied_bytes_holder[0] += len(buf)
+            event_queue.put({
+                "op": "update",
+                "bar_id": bar_id,
+                "current": copied_bytes_holder[0]
+            })
     shutil.copystat(src_file, dst_file)
 
 def copy_with_progress(src, dst, desc="Copying"):
@@ -25,9 +42,25 @@ def copy_with_progress(src, dst, desc="Copying"):
     Shows a tqdm progress bar for total bytes copied.
     """
     with _progress_lock:
+        total_size = _calculate_total_size(src)
+        copied_bytes_holder = [0]
+        event_queue=get_event_queue()
+        bar_id = get_random_value_for_id()
+        is_copying_anything = False
+
         if os.path.isfile(src):
             os.makedirs(os.path.dirname(dst), exist_ok=True)
-            _copy_file(src, dst)
+            if not is_copying_anything:
+                event_queue.put({
+                    "op": "create",
+                    "bar_type": BAR_TYPE.OTHER,
+                    "bar_id": bar_id,
+                    "total": total_size,
+                    "metadata": {"name": f"{desc}: ", "unit": "B", "unit_scale": True, "unit_divisor": 1024}
+                })
+
+            _copy_file(src, dst, bar_id, event_queue, copied_bytes_holder)
+            is_copying_anything = True
         else:
             os.makedirs(dst, exist_ok=True)
             for dirpath, _, files in os.walk(src):
@@ -36,11 +69,23 @@ def copy_with_progress(src, dst, desc="Copying"):
                 os.makedirs(target_dir, exist_ok=True)
 
                 for file in files:
+                    if not is_copying_anything:
+                        event_queue.put({
+                            "op": "create",
+                            "bar_type": BAR_TYPE.OTHER,
+                            "bar_id": bar_id,
+                            "total": total_size,
+                            "metadata": {"name": f"{desc}: ", "unit": "B", "unit_scale": True, "unit_divisor": 1024}
+                        })
+
                     src_file = os.path.join(dirpath, file)
                     dst_file = os.path.join(target_dir, file)
-                    _copy_file(src_file, dst_file)
+                    _copy_file(src_file, dst_file, bar_id, event_queue, copied_bytes_holder)
+                    is_copying_anything = True
 
             shutil.copystat(src, dst)
+        if is_copying_anything:
+            event_queue.put({"op": "finish", "bar_id": bar_id})
 
 def move_with_progress(src, dst, remove_empty_source=False, move_contents_not_dir_itself=False, desc="Moving"):
     """
