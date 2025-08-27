@@ -106,8 +106,8 @@ class JobManager:
 
                         for src, dst, rel in chunk:
                             local_dst = os.path.join(self.tmp_input_dir, rel)
-                            copy_with_progress(src, local_dst, desc=f"Preloading {os.path.basename(rel)}")
-                            move_with_progress(src, dst, desc=f"Preloading {os.path.basename(rel)}")
+                            copy_with_progress(src, local_dst, desc=f"Preloading (Copy) to Local: {os.path.basename(rel)}")
+                            move_with_progress(src, dst, desc=f"Preloading (Move) to InProgress: {os.path.basename(rel)}")
                             for crf in self.crf_values:
                                 self._enqueue_task(EncodingTask(local_dst, rel, crf, chunk_name))
                     else:

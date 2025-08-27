@@ -30,6 +30,7 @@ class BarEntry:
     desc: str | None = None
     position: int | None = None
     start_time: float | None = None
+    end_time: float | None = None
     last_value: float | int | None = None
     bar_format: str | None = None
     is_done: bool = False
@@ -155,18 +156,8 @@ class TqdmManager:
         self.remove_bar_and_get_bar_entry(bar_id, bar_type)
         state = self._snapshot_bar_state(bar_entry_keep.bar) if bar_entry_keep.bar else {"n": 0}
         
-        if bar_type == BAR_TYPE.CHUNK:
-            bar = self._create_tqdm_bar(bar_type, bar_id, bar_entry_keep.total, bar_entry_keep.desc, new_position, bar_entry_keep.metadata, bar_entry_keep.is_done, bar_entry_keep.bar_format)
-            bar.refresh()
-        elif bar_type == BAR_TYPE.FILE:
-            bar = self._create_tqdm_bar(bar_type, bar_id, bar_entry_keep.total, bar_entry_keep.desc, new_position, bar_entry_keep.metadata, bar_entry_keep.is_done, bar_entry_keep.bar_format)
-            bar.refresh()
-        elif bar_type == BAR_TYPE.OTHER:
-            bar = self._create_tqdm_bar(bar_type, bar_id, bar_entry_keep.total, bar_entry_keep.desc, new_position, bar_entry_keep.metadata, bar_entry_keep.is_done, bar_entry_keep.bar_format)
-            bar.refresh()
-        elif bar_type == BAR_TYPE.FILE_WAITING or bar_type == BAR_TYPE.CHUNK_DIVIDER:
-            bar = self._create_tqdm_bar(bar_type, bar_id, bar_entry_keep.total, bar_entry_keep.desc, new_position, bar_entry_keep.metadata, bar_entry_keep.is_done, bar_entry_keep.bar_format)
-            bar.refresh()
+        bar = self._create_tqdm_bar(bar_type, bar_id, None, None, new_position, None, bar_entry_keep)
+        bar.refresh()
 
         if not bar_entry_keep.is_done and bar_type != BAR_TYPE.CHUNK_DIVIDER:
             # restore state
@@ -243,7 +234,20 @@ class TqdmManager:
                 bar_entry_keep = self.get_or_pop_bar(bar_id_keep, pop=False)[2]
                 self.shift_pos(bar_id_keep, new_pos, bar_entry_keep)
 
-    def _create_tqdm_bar(self, bar_type, bar_id, total=None, desc=None, position=None, metadata={}, is_done=False, done_format=None):
+    def _create_tqdm_bar(self, bar_type, bar_id, total=None, desc=None, position=None, metadata={}, older_bar_entry=None):
+        is_done=False
+        start_time=None
+        end_time=None
+        last_value=None
+        if older_bar_entry:
+            total=older_bar_entry.total
+            metadata=older_bar_entry.metadata
+            desc=older_bar_entry.desc
+            start_time=older_bar_entry.start_time
+            end_time=older_bar_entry.end_time
+            last_value=older_bar_entry.last_value
+            is_done=older_bar_entry.is_done
+
         if bar_type == BAR_TYPE.CHUNK:
             if not self.bar_id_exists("chunk_divider"):
                 bar = self._create_tqdm_bar(BAR_TYPE.CHUNK_DIVIDER, "chunk_divider")
@@ -312,14 +316,15 @@ class TqdmManager:
             metadata=metadata,
             desc=desc,
             position=position,
-            start_time=time.time(),
-            last_value=0,
+            start_time=start_time or time.time(),
+            end_time=end_time or None,
+            last_value=last_value or 0,
             bar_format=bar_format,
             is_done=is_done
         )
         if bar_entry.is_done:
-            bar.bar_format = done_format
-            bar_entry.bar_format = done_format
+            bar.bar_format = older_bar_entry.bar_format
+            bar_entry.bar_format = older_bar_entry.bar_format
 
         self.bars[bar_type].append((bar_id, bar_entry))
         return bar
@@ -373,10 +378,11 @@ class TqdmManager:
                 return
             bar_type, _, bar_entry = self.get_or_pop_bar(bar_id)
             bar = bar_entry.bar
+            bar_entry.end_time=time.time()
 
             if bar_type == BAR_TYPE.CHUNK:
                 total = format_size(bar.total)
-                elapsed = format_elapsed(bar.format_dict["elapsed"])
+                elapsed = format_elapsed(bar_entry.end_time-bar_entry.start_time)
 
                 postfix = f"size={total} • elapsed={elapsed}"
                 bar.bar_format = f"{{desc}} ✓ {postfix}"

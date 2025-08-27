@@ -1,11 +1,74 @@
-import platform
+"""
+AV1 Video Encoding Job Processor
+================================
+
+This script operates as a distributed worker node for AV1 video encoding, processing `.mp4` files
+using FFmpeg with the `libaom-av1` codec at various CRF (Constant Rate Factor) values. It is designed
+for use in a multi-machine setup where each machine autonomously claims and processes jobs from
+a shared directory structure.
+
+Key Features:
+-------------
+- Claims `.mp4` jobs from a shared queue (`./SFTP_ROOT/jobs/to_assign`)
+- Encodes videos using AV1 codec at specified CRF levels (default: 24, 60)
+- Monitors and throttles CPU usage to avoid system overload
+- Supports parallel encoding using multiple processes, respecting a CPU utilization threshold
+- Displays real-time encoding progress via tqdm progress bars
+- Implements a file-based locking system to prevent job conflicts between machines
+- Automatically moves jobs through processing states: `to_assign` → `in_progress` → `done`
+
+Directory Structure:
+--------------------
+- ./SFTP_ROOT/
+  ├── jobs/
+  │   ├── to_assign/        # Input videos to be processed
+  │   ├── in_progress/      # Temporary holding for claimed jobs
+  │   └── done/             # Successfully processed videos
+  └── locks/                # Lock files for each machine (e.g., machineA.lock)
+
+- ./tmp_input/processing/    # Local temporary working directory for processing
+- ./tmp_output_av1_crfXX/    # Intermediate output for each CRF level
+- ./ForTesting_Out/AV1_crfXX/ # Final output directory for encoded files by CRF
+
+Environment Variables:
+----------------------
+- `MACHINE_ID` (optional): Unique identifier for the current machine.
+  If not set, it is auto-generated using a combination of IP and MAC address.
+
+Configuration Constants:
+------------------------
+- `CRF_VALUES`: List of CRF levels used for encoding.
+- `MAX_CPU_UTIL`: Maximum CPU utilization fraction (e.g., 0.8 for 80%).
+- `CHUNK_SIZE`: Maximum total size (in bytes) of job batch to claim at once.
+
+Dependencies:
+-------------
+- Python 3.8+
+- FFmpeg with `libaom-av1` and `libopus` support
+- Python packages:
+  - `tqdm`
+  - `psutil`
+
+Usage:
+------
+This script is intended to run periodically or persistently on distributed worker nodes.
+Each instance automatically claims jobs, encodes them, and manages its resource usage.
+
+To run:
+    python encode_jobs_av1.py [--debug] [--throttle]
+
+Options:
+--------
+--debug      Enable verbose debug logging
+--throttle   Enable CPU usage monitoring and adaptive throttling
+
+"""
 import time
 from tqdm import tqdm
 import os
 import sys
 import atexit
 import shutil
-import requests
 
 from config import TO_ASSIGN, CRF_VALUES, MACHINE_ID, MAX_WORKERS
 from helpers.logging_utils import setup_logging, stop_logging, log
