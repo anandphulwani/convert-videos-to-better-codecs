@@ -1,8 +1,6 @@
 import os
-import re
 import pathlib
 import signal
-import shutil
 import threading
 import time
 from multiprocessing import Manager, Process, JoinableQueue, RLock, Event, Value
@@ -13,7 +11,7 @@ from config import (
     IN_PROGRESS, DONE_DIR, FAILED_DIR, 
     TMP_INPUT, TMP_OUTPUT_ROOT, FINAL_OUTPUT_ROOT, CRF_VALUES,
     TMP_PROCESSING, TMP_FAILED_ROOT, TMP_SKIPPED_ROOT,
-    MAX_WORKERS, CHUNK_SIZE
+    MAX_WORKERS, CHUNK_SIZE, LOCKS_DIR, MACHINE_ID
 )
 from helpers.get_topmost_dir import get_topmost_dir
 from helpers.remove_topmost_dir import remove_topmost_dir
@@ -25,6 +23,7 @@ from includes.encode_file import encode_file
 from includes.move_logs_to_central_output import move_logs_to_central_output
 from includes.move_done_if_all_crf_outputs_exist import move_done_if_all_crf_outputs_exist
 from includes.remove_empty_dirs_in_path import remove_empty_dirs_in_path
+from includes.remote_transfer_locks import try_acquire_remote_transfer_lock_loop, renew_remote_transfer_lock
 
 @dataclass
 class EncodingTask:
@@ -87,33 +86,56 @@ class JobManager:
         while (not self.stop_event.is_set()) and (not self.preload_done.is_set()):
             with self.active_jobs.get_lock():
                 if self.active_jobs.value <= max(1, self.max_workers // 2):
-                    chunk = claim_files()
-                    if chunk:
-                        # infer chunk name from first file’s rel path
-                        _, _, first_rel = chunk[0]
-                        chunk_name = get_topmost_dir(first_rel)
 
-                        # 1) SIZE THE CHUNK (fast: file sizes only) — no tqdm
-                        total_input_bytes = 0
-                        for src, _, _ in chunk:
-                            try:
-                                total_input_bytes += os.path.getsize(src) * len(self.crf_values)
-                            except FileNotFoundError:
-                                pass
+                    # 1. Try to acquire the remote transfer lock
+                    try_acquire_remote_transfer_lock_loop()
 
-                        self.chunk_totals[chunk_name] = total_input_bytes
-                        self.chunk_progress[chunk_name] = self.manager.Value('q', 0)
+                    # 2. Start a thread to renew the lock
+                    renew_lock_stop_event = threading.Event()
+                    renew_thread = threading.Thread(
+                        target=renew_remote_transfer_lock, 
+                        args=(renew_lock_stop_event,), 
+                        daemon=True
+                    )
+                    renew_thread.start()
 
-                        for src, dst, rel in chunk:
-                            local_dst = os.path.join(self.tmp_input_dir, rel)
-                            copy_with_progress(src, local_dst, desc=f"Preloading (Copy) to Local: {os.path.basename(rel)}")
-                            move_with_progress(src, dst, desc=f"Preloading (Move) to InProgress: {os.path.basename(rel)}")
-                            for crf in self.crf_values:
-                                self._enqueue_task(EncodingTask(local_dst, rel, crf, chunk_name))
-                    else:
-                        log("No more files to claim. Marking preload as done.")
-                        self.preload_done.set()
-                        break
+                    try:
+                        chunk = claim_files()
+                        if chunk:
+                            _, _, first_rel = chunk[0]
+                            chunk_name = get_topmost_dir(first_rel)
+
+                            # Size the chunk
+                            total_input_bytes = 0
+                            for src, _, _ in chunk:
+                                try:
+                                    total_input_bytes += os.path.getsize(src) * len(self.crf_values)
+                                except FileNotFoundError:
+                                    pass
+
+                            self.chunk_totals[chunk_name] = total_input_bytes
+                            self.chunk_progress[chunk_name] = self.manager.Value('q', 0)
+
+                            for src, dst, rel in chunk:
+                                local_dst = os.path.join(self.tmp_input_dir, rel)
+                                copy_with_progress(src, local_dst, desc=f"Preloading (Copy) to Local: {os.path.basename(rel)}")
+                                move_with_progress(src, dst, desc=f"Preloading (Move) to InProgress: {os.path.basename(rel)}")
+                                for crf in self.crf_values:
+                                    self._enqueue_task(EncodingTask(local_dst, rel, crf, chunk_name))
+                        else:
+                            log("No more files to claim. Marking preload as done.")
+                            self.preload_done.set()
+                            break
+                    finally:
+                        # 3. Stop the renew thread and clean up the lock
+                        renew_lock_stop_event.set()
+                        renew_thread.join()
+                        try:
+                            lock_path = os.path.join(LOCKS_DIR, f"remote_fetching.lock")
+                            remove_path(lock_path)
+                            log("Lock file removed.", level="debug")
+                        except FileNotFoundError:
+                            log(f"Lock file already removed.", level="error")
             time.sleep(0.5)
 
     def _enqueue_task(self, task: EncodingTask):
