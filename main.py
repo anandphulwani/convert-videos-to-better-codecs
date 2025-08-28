@@ -76,6 +76,7 @@ from helpers.call_http_url import call_http_url
 from clazz.JobManager import JobManager
 from includes.cleanup_working_folders import cleanup_working_folders
 from includes.move_logs_to_central_output import move_logs_to_central_output
+from includes.state import pause_flag
 from tqdm_manager import get_tqdm_manager, get_event_queue, BAR_TYPE
 
 def _restore():
@@ -101,6 +102,7 @@ def main():
     completed_once = set()
     created_bars = set()
     last_progress = {}
+    pause_flag.clear()
     
     tqdm_manager = get_tqdm_manager()
     event_queue = get_event_queue()
