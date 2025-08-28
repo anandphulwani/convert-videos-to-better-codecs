@@ -1,5 +1,4 @@
 import threading
-from queue import Queue
 
 # Additional thread-safe constructs for preloading
 # preload_lock = threading.Lock()
