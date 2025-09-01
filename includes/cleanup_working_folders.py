@@ -11,10 +11,14 @@ from config import (
     TMP_INPUT, TMP_PROCESSING, TMP_OUTPUT_ROOT, TMP_FAILED_ROOT, TMP_SKIPPED_ROOT
 )
 
+def clear_tmp_processing():
+    remove_path(os.path.dirname(TMP_PROCESSING))
+    os.makedirs(os.path.dirname(TMP_PROCESSING), exist_ok=True)
+    log(f"Cleared TMP_PROCESSING folder", level="debug")
+
 def cleanup_working_folders():
     log("Cleaning up WORKING folders...")
-    for src, _ in get_all_files_sorted(os.path.dirname(TMP_PROCESSING)):
-        remove_path(src)
+    clear_tmp_processing()
 
     remove_files_of_ext(TMP_INPUT, "done")
 
