@@ -13,7 +13,7 @@ from config import (
 
 def cleanup_working_folders():
     log("Cleaning up WORKING folders...")
-    for src, rel in get_all_files_sorted(os.path.dirname(TMP_PROCESSING)):
+    for src, _ in get_all_files_sorted(os.path.dirname(TMP_PROCESSING)):
         remove_path(src)
 
     remove_files_of_ext(TMP_INPUT, "done")
