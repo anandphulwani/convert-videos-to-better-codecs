@@ -11,7 +11,7 @@ from config import (
     IN_PROGRESS, DONE_DIR, FAILED_DIR, 
     TMP_INPUT, TMP_OUTPUT_ROOT, FINAL_OUTPUT_ROOT, CRF_VALUES,
     TMP_PROCESSING, TMP_FAILED_ROOT, TMP_SKIPPED_ROOT,
-    MAX_WORKERS, CHUNK_SIZE, LOCKS_DIR, MACHINE_ID
+    MAX_WORKERS, CHUNK_SIZE, LOCKS_DIR
 )
 from helpers.get_topmost_dir import get_topmost_dir
 from helpers.remove_topmost_dir import remove_topmost_dir
