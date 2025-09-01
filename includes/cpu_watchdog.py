@@ -1,16 +1,61 @@
+import random
 import psutil
+import time
+import math
+from collections import deque
 from helpers.logging_utils import log
+from includes.state import pause_flag
 
-from state import pause_flag
+cpu_percent_benchmark_to_pause = 10
+cpu_usage_history = deque(maxlen=10)
 
-def cpu_watchdog():
-    while True:
-        usage = psutil.cpu_percent(interval=5)
-        log(f"CPU usage: {usage}%", level="debug")
-        if usage >= 95:
-            log("High CPU usage detected. Pausing encoding...", level="warning")
-            pause_flag.clear()
-        elif usage <= 10:
+def get_filtered_cpu_usage():
+    total_cpu = 0.0
+    for proc in psutil.process_iter(['cpu_percent', 'nice']):
+        try:
+            nice = proc.info['nice']
+            cpu = proc.info['cpu_percent']
+            if nice < 10:
+                total_cpu += cpu
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    logical_cpus = psutil.cpu_count()
+    return total_cpu / logical_cpus
+
+cpu_usage_history = deque(maxlen=10)  # Store the last 10 usage values
+
+def collect_cpu_samples(num_samples=10):
+    for proc in psutil.process_iter():
+        proc.cpu_percent(interval=None)
+    time.sleep(1)
+
+    samples = []
+    for _ in range(num_samples):
+        usage = get_filtered_cpu_usage()
+        samples.append(usage)
+
+        sleep_duration = random.uniform(0.01, 1.5)
+        time.sleep(sleep_duration)
+
+    return samples
+
+def cpu_watchdog(stop_event):
+    while not stop_event.is_set():
+        log("[Monitor] Starting new sampling round...", level="debug")
+        
+        samples = collect_cpu_samples()
+        cpu_usage_history.extend(samples)
+
+        avg_usage = sum(cpu_usage_history) / len(cpu_usage_history)
+        log(f"[Monitor] Avg CPU usage (last {len(cpu_usage_history)}): {avg_usage:.2f}%", level="debug")
+
+        if math.ceil(avg_usage) > cpu_percent_benchmark_to_pause:
             if not pause_flag.is_set():
-                log("CPU usage normalized. Resuming encoding...")
-            pause_flag.set()
+                log(f"CPU usage ({math.ceil(avg_usage)}%) exceeds {cpu_percent_benchmark_to_pause}%. Pausing encoding...", level="debug")
+                pause_flag.set()
+        else:
+            if pause_flag.is_set():
+                log("CPU usage normalized. Resuming encoding...", level="debug")
+                pause_flag.clear()
+
+        time.sleep(10 * 60)  # Sleep for 10 minutes
