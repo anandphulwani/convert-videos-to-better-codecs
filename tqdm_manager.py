@@ -73,7 +73,7 @@ class TqdmManager:
     def __init__(self, base_position=0):
         self.lock = threading.RLock()
         self.bars = {bar_type: [] for bar_type in BAR_TYPE}
-        self.position_base = base_position
+        self.base_position = base_position
         self._event_thread = None
         self._event_queue = None
         self._stop_event = threading.Event()
@@ -127,17 +127,17 @@ class TqdmManager:
                 self.create_slot_bar(index)
 
     def _get_position(self, bar_type, bar_id = None):
-        pos = self.position_base
+        pos = self.base_position
         if bar_type == BAR_TYPE.FILE:
             return len(self.bars[BAR_TYPE.OTHER]) + int(bar_id[-2:]) - 1 
         if bar_type == BAR_TYPE.FILE_WAITING:
             return len(self.bars[BAR_TYPE.OTHER]) + int(bar_id[-2:]) - 1
         if bar_type == BAR_TYPE.CHUNK_DIVIDER:
-            return len(self.bars[BAR_TYPE.OTHER]) + self.position_base
+            return len(self.bars[BAR_TYPE.OTHER]) + self.base_position
         if bar_type == BAR_TYPE.CHUNK:
             pos = (max(bar[1].position for bar in self.bars[BAR_TYPE.CHUNK]) + 1
                 if self.bars[BAR_TYPE.CHUNK]
-                else len(self.bars[BAR_TYPE.OTHER]) + self.position_base + 1)
+                else len(self.bars[BAR_TYPE.OTHER]) + self.base_position + 1)
         return pos
 
     def _snapshot_bar_state(self, bar):
@@ -210,7 +210,7 @@ class TqdmManager:
         first_chunk_bar = bar_list[0][1].bar
         first_chunk_bar_positon = abs(getattr(
             first_chunk_bar, "pos", 
-            getattr(first_chunk_bar, "_pos", self.position_base + 1)
+            getattr(first_chunk_bar, "_pos", self.base_position + 1)
         ))
 
         # Step 1: Identify candidates for removal (✓ in description)
