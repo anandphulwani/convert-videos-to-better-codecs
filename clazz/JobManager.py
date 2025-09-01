@@ -24,6 +24,7 @@ from includes.move_logs_to_central_output import move_logs_to_central_output
 from includes.move_done_if_all_crf_outputs_exist import move_done_if_all_crf_outputs_exist
 from includes.remove_empty_dirs_in_path import remove_empty_dirs_in_path
 from includes.remote_transfer_locks import try_acquire_remote_transfer_lock_loop, renew_remote_transfer_lock
+from includes.cleanup_working_folders import clear_tmp_processing
 from includes.cpu_watchdog import cpu_watchdog
 from includes.state import pause_flag
 from tqdm_manager import get_tqdm_manager
@@ -96,7 +97,7 @@ class JobManager:
                     self.pause_event.set()
                     tqdm_manager.pause_tqdm_manager()
                     self.pause()
-                    self._clear_tmp_processing()
+                    clear_tmp_processing()
                     was_paused = True
             else:
                 if was_paused:
@@ -419,13 +420,7 @@ class JobManager:
             path = os.path.join(TMP_PROCESSING.format(crf), chunk_folder)
             remove_empty_dirs_in_path(path, [os.path.dirname(os.path.dirname(TMP_PROCESSING))])
 
-    def pause(self):
-        self._kill_tracked_processes()
-        self._join_light_threads(is_pause=True)
-
-    def shutdown(self):
-        # Request stop, and make sure workers can unblock from .get()
-        self.stop_event.set()
+    def _enqueue_worker_sentinels(self):
         try:
             # Push sentinels to unblock any idle workers
             for _ in range(self.max_workers):
@@ -433,17 +428,20 @@ class JobManager:
         except Exception:
             pass
 
+    def _kill_tracked_processes(self):
         # Kill any external encoder processes we’ve tracked
-        for pid in list(self.process_registry.values()):
+        for key, pid in list(self.process_registry.items()):
             try:
-                # log(f"Killing encoder process id: {pid}")
+                log(f"Killing encoder process id: {pid}", level="debug")
                 os.kill(pid, signal.SIGKILL)
-                self.process_registry.pop(pid, None)
+            except ProcessLookupError:
+                log(f"Process {pid} not found; removing from registry anyway", level="warning")
             except Exception as e:
                 log(f"Failed to kill process {pid}: {e}", level="warning")
+            finally:
+                self.process_registry.pop(key, None)
 
-        # Give workers a moment to exit gracefully
-        # deadline = time.time() + 5
+    def _gracefully_stop_workers(self):
         for p in self.processes:
             p.join(timeout=3)
             if p.is_alive():
@@ -453,11 +451,28 @@ class JobManager:
                     p.kill()
         self.processes.clear()
 
+    def _join_light_threads(self, is_pause=False):
         for t in self.light_threads:
+            if is_pause:
+                if t.name == "_start_pause_monitor" or t.name == "_start_cpu_watchdog":
+                    continue
+                elif t.name == "_start_preloader":
+                    continue
             t.join(timeout=2)
-        self.light_threads.clear()
+        if not is_pause:
+            self.light_threads.clear()
 
+    def pause(self):
+        self._kill_tracked_processes()
+        self._join_light_threads(is_pause=True)
 
+    def shutdown(self):
+        # Request stop, and make sure workers can unblock from .get()
+        self.stop_event.set()
+        self._enqueue_worker_sentinels()
+        self._kill_tracked_processes()
+        self._gracefully_stop_workers()
+        self._join_light_threads()
         try:
             self.manager.shutdown()
         except Exception:
