@@ -6,6 +6,7 @@ from enum import Enum
 import multiprocessing as mp
 from tqdm import tqdm
 from dataclasses import dataclass
+from config import MAX_WORKERS
 from helpers.format_elapsed import format_elapsed
 from helpers.format_size import format_size
 from helpers.format_time import format_time
@@ -472,7 +473,7 @@ def get_random_value_for_id():
 def get_tqdm_manager():
     global _instance, _event_queue
     if _instance is None:
-        _instance = TqdmManager(base_position=6)
+        _instance = TqdmManager(base_position=MAX_WORKERS)
     if _event_queue is None:
         _event_queue = create_event_queue()
         _instance.attach_event_queue(_event_queue)
