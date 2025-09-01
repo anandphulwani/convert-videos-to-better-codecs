@@ -24,6 +24,9 @@ from includes.move_logs_to_central_output import move_logs_to_central_output
 from includes.move_done_if_all_crf_outputs_exist import move_done_if_all_crf_outputs_exist
 from includes.remove_empty_dirs_in_path import remove_empty_dirs_in_path
 from includes.remote_transfer_locks import try_acquire_remote_transfer_lock_loop, renew_remote_transfer_lock
+from includes.cpu_watchdog import cpu_watchdog
+from includes.state import pause_flag
+from helpers.logging_utils import log
 
 @dataclass
 class EncodingTask:
@@ -68,7 +71,41 @@ class JobManager:
         self._preload_existing_input_chunks()
         self._start_workers()
         self._start_preloader()
+        self._start_cpu_watchdog()
+        self._start_pause_monitor()
         # Small head-start for the preloader is fine but not required.
+
+    def _start_cpu_watchdog(self):
+        t = threading.Thread(target=cpu_watchdog, name="_start_cpu_watchdog", args=(self.stop_event,), daemon=True)
+        t.start()
+        self.light_threads.append(t)
+
+    def _start_pause_monitor(self):
+        t = threading.Thread(target=self._pause_monitor_loop, name="_start_pause_monitor", args=(self.stop_event,), daemon=True)
+        t.start()
+        self.light_threads.append(t)
+
+    def _pause_monitor_loop(self, stop_event):
+        tqdm_manager = get_tqdm_manager()
+        was_paused = False
+        while not stop_event.is_set():
+            if pause_flag.is_set():
+                if not was_paused:
+                    log("Pause detected — stopping workers and clearing TMP_PROCESSING...", level="warning")
+                    self.pause_event.set()
+                    tqdm_manager.pause_tqdm_manager()
+                    self.pause()
+                    self._clear_tmp_processing()
+                    was_paused = True
+            else:
+                if was_paused:
+                    log("Resume detected — restarting workers...", level="info")
+                    was_paused = False
+                    tqdm_manager.resume_tqdm_manager()
+                    self._preload_existing_input_chunks()
+                    self._start_preloader()
+                    self.pause_event.clear()
+            time.sleep(1)
 
     def _start_preloader(self):
         t = threading.Thread(target=self._preload_loop, daemon=True)
@@ -369,6 +406,10 @@ class JobManager:
         for crf in CRF_VALUES:
             path = os.path.join(TMP_PROCESSING.format(crf), chunk_folder)
             remove_empty_dirs_in_path(path, [os.path.dirname(os.path.dirname(TMP_PROCESSING))])
+
+    def pause(self):
+        self._kill_tracked_processes()
+        self._join_light_threads(is_pause=True)
 
     def shutdown(self):
         # Request stop, and make sure workers can unblock from .get()
