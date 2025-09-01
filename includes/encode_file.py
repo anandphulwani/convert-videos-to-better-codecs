@@ -81,6 +81,7 @@ def encode_file(
         )
 
     if process_registry is not None:
+        log(f"Adding to process_registry: {process.pid}", level="debug")
         process_registry[os.getpid()] = process.pid
 
     last_progress = 0
