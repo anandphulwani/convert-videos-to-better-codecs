@@ -78,6 +78,7 @@ class TqdmManager:
         self._event_thread = None
         self._event_queue = None
         self._stop_event = threading.Event()
+        self._pause_event = threading.Event()
         self.chunk_bar_limit = 10
         self.create_slot_bars(base_position)
 
@@ -410,6 +411,9 @@ class TqdmManager:
 
     def _event_loop(self):
         while not self._stop_event.is_set():
+            if self._pause_event.is_set():
+                time.sleep(1)
+                continue
             try:
                 msg = self._event_queue.get(timeout=0.2)
             except Empty:
@@ -449,6 +453,31 @@ class TqdmManager:
             pass
         self._event_thread.join(timeout=2)
         self._event_thread = None
+
+    def pause_tqdm_manager(self):
+        with self.lock:
+            self._pause_event.set()
+            try:
+                if self._event_queue is not None:
+                    while True:
+                        try:
+                            self._event_queue.get_nowait()
+                        except Empty:
+                            break
+            except Exception:
+                pass
+
+            for bar_list in self.bars.values():
+                for bar_id_rm, _ in list(bar_list):
+                    self.remove_bar_and_get_bar_entry(bar_id_rm)
+
+            clear_terminal_below_cursor()
+
+
+    def resume_tqdm_manager(self):
+        with self.lock:
+            self._pause_event.clear()
+            self.create_slot_bars(self.base_position)
 
 # --------------------------- module-level helpers ---------------------------
 def create_event_queue(ctx: "mp.context.BaseContext" = None) -> "mp.Queue":

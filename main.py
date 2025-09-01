@@ -111,6 +111,10 @@ def main():
     
     try:
         while True:
+            if job_manager.get_pause_event().is_set():
+                created_bars.clear()
+                time.sleep(1)
+                continue
             # Create bars for newly discovered chunks
             for chunk_name, total_bytes in list(job_manager.chunk_totals.items()):
                 if chunk_name not in created_bars:
