@@ -55,6 +55,7 @@ class JobManager:
         self.completed_tasks = Value('i', 0)
 
         self.stop_event = Event()
+        self.pause_event = Event()
         self.file_moving_lock = RLock()
         self.bytes_encoded = self.manager.Value('q', 0)
 
@@ -230,18 +231,34 @@ class JobManager:
         log("Scanning TMP_INPUT for pre-existing chunks...")
         task_count = 0
 
-        for dirpath, _, filenames in os.walk(self.tmp_input_dir):
-            for filename in filenames:
-                if not filename.lower().endswith(".mp4"):
-                    continue
+        for _, dirnames, _ in os.walk(self.tmp_input_dir):
+            for chunk_name in dirnames:
+                if chunk_name.startswith("chunk"):
+                    chunk_dir = os.path.join(self.tmp_input_dir, chunk_name)
+                    log(f"Processing chunk directory: {chunk_dir}", level="debug")
 
-                src_path = os.path.join(dirpath, filename)
-                rel_path = os.path.relpath(src_path, self.tmp_input_dir)
+                    total_input_bytes = 0
+                    
+                    for dirpath, _, filenames in os.walk(chunk_dir):
+                        for filename in filenames:
+                            if not filename.lower().endswith(".mp4"):
+                                continue
 
-                chunk_name = get_topmost_dir(rel_path)
-                for crf in self.crf_values:
-                    self._enqueue_task(EncodingTask(src_path, rel_path, crf, chunk_name))
-                    task_count += 1
+                            src_path = os.path.join(dirpath, filename)
+                            rel_path = os.path.relpath(src_path, self.tmp_input_dir)
+
+                            try:
+                                total_input_bytes += os.path.getsize(src_path) * len(self.crf_values)
+                            except FileNotFoundError:
+                                pass
+
+                            for crf in self.crf_values:
+                                self._enqueue_task(EncodingTask(src_path, rel_path, crf, chunk_name))
+                                task_count += 1
+
+                    self.chunk_totals[chunk_name] = total_input_bytes
+                    self.chunk_progress[chunk_name] = self.manager.Value('q', 0)
+                        
 
         log(f"Queued {task_count} tasks from existing TMP_INPUT chunk folders.")
 
