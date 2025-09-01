@@ -21,6 +21,7 @@ def encode_file(
     process_registry=None,
     chunk_progress=None,
     chunk_key=None,
+    pause_event=None,
 ):
     event_queue=get_event_queue()
     tmp_processing_dir = TMP_PROCESSING.format(crf)
@@ -125,6 +126,7 @@ def encode_file(
     stdout, stderr = process.communicate()
 
     if process.returncode != 0 or not os.path.exists(tmp_processing_file):
+        if pause_event is None or not pause_event.is_set():
         log(f"{'=' * 29}  START  {'=' * 29}", level="error")
         log(f"FFmpeg failed for {rel_path} [CRF {crf}]", level="error")
         log(stdout, level="error")
@@ -152,6 +154,8 @@ def encode_file(
             event_queue.put({"op": "finish", "bar_id": f"file_slot_{slot_idx:02}"})
 
         return [src_file, crf, "failed", f"FFmpeg failed for {rel_path} (see log)"]
+        else:
+            return [src_file, crf, "failed-paused", f"Main thread for {rel_path} is paused"]
 
     elapsed = time.time() - start_time
 

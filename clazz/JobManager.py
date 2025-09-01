@@ -26,6 +26,7 @@ from includes.remove_empty_dirs_in_path import remove_empty_dirs_in_path
 from includes.remote_transfer_locks import try_acquire_remote_transfer_lock_loop, renew_remote_transfer_lock
 from includes.cpu_watchdog import cpu_watchdog
 from includes.state import pause_flag
+from tqdm_manager import get_tqdm_manager
 from helpers.logging_utils import log
 
 @dataclass
@@ -108,7 +109,7 @@ class JobManager:
             time.sleep(1)
 
     def _start_preloader(self):
-        t = threading.Thread(target=self._preload_loop, daemon=True)
+        t = threading.Thread(target=self._preload_loop, name="_start_preloader", args=(self.stop_event, self.pause_event), daemon=True)
         t.start()
         self.light_threads.append(t)
 
@@ -119,9 +120,12 @@ class JobManager:
             p.start()
             self.processes.append(p)
 
-    def _preload_loop(self):
+    def _preload_loop(self, stop_event, pause_event):
         log("Preloader started")
-        while (not self.stop_event.is_set()) and (not self.preload_done.is_set()):
+        while (not stop_event.is_set()) and (not self.preload_done.is_set()):
+            if pause_event.is_set():
+                time.sleep(1)
+                continue
             with self.active_jobs.get_lock():
                 if self.active_jobs.value <= max(1, self.max_workers // 2):
 
@@ -183,6 +187,10 @@ class JobManager:
 
     def _worker_loop(self, slot_idx: int):
         while not self.stop_event.is_set():
+            if self.pause_event.is_set():
+                time.sleep(5)
+                continue
+
             try:
                 task = self.task_queue.get(timeout=1)
             except Empty:
@@ -204,6 +212,7 @@ class JobManager:
                     process_registry=self.process_registry,
                     chunk_progress=self.chunk_progress,
                     chunk_key=task.chunk,
+                    pause_event=self.pause_event
                 )
                 self._handle_encoding_result(task, result)
             except Exception as e:
@@ -235,7 +244,8 @@ class JobManager:
             self._process_result_status(status, paths)
             self._maybe_cleanup_and_finalize(task, paths)
 
-        log(f"[CRF {crf}] {status.upper()}: {result[3]}")
+        if status != "failed-paused":
+            log(f"[CRF {crf}] {status.upper()}: {result[3]}")
 
     def _construct_paths(self, task):
         rel = task.rel_path
@@ -251,6 +261,8 @@ class JobManager:
         if status in ("failed", "skipped-notsupported"):
             remove_path(paths["processing"])
             self._touch_file(paths["failed"])
+        elif status == "failed-paused":
+            remove_path(paths["processing"])
         elif status == "skipped-alreadyexists-main":
             self._touch_file(paths["skipped"])
         elif status == "skipped-alreadyexists-tmp":
@@ -451,6 +463,9 @@ class JobManager:
         except Exception:
             pass
 
+    def get_pause_event(self):
+        return self.pause_event
+    
     def get_encoded_bytes(self):
         return self.bytes_encoded.value
 
