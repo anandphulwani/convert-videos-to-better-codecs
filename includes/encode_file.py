@@ -127,33 +127,33 @@ def encode_file(
 
     if process.returncode != 0 or not os.path.exists(tmp_processing_file):
         if pause_event is None or not pause_event.is_set():
-        log(f"{'=' * 29}  START  {'=' * 29}", level="error")
-        log(f"FFmpeg failed for {rel_path} [CRF {crf}]", level="error")
-        log(stdout, level="error")
-        log("-" * 60, level="error")
-        log(stderr, level="error")
-        log(f"{'=' * 30}  END  {'=' * 30}", level="error")
+            log(f"{'=' * 29}  START  {'=' * 29}", level="error")
+            log(f"FFmpeg failed for {rel_path} [CRF {crf}]", level="error")
+            log(stdout, level="error")
+            log("-" * 60, level="error")
+            log(stderr, level="error")
+            log(f"{'=' * 30}  END  {'=' * 30}", level="error")
 
-        # Print partial stderr to console
-        stderr_lines = stderr.strip().splitlines()
-        snippet = stderr_lines[-10:]  # Show first 10 lines
-        print(f"\n{'=' * 29}  START  {'=' * 29}")
-        print(f"FFmpeg error for {rel_path} [CRF {crf}]")
-        print("-" * 60)
-        for line in snippet:
-            print(line)
-        if len(stderr_lines) > 10:
-            print("... (truncated)")
-        print(f"{'=' * 30}  END  {'=' * 30}\n")
-        
-        if process_registry is not None:
-            process_registry.pop(os.getpid(), None)
+            # Print partial stderr to console
+            stderr_lines = stderr.strip().splitlines()
+            snippet = stderr_lines[-10:]  # Show first 10 lines
+            print(f"\n{'=' * 29}  START  {'=' * 29}")
+            print(f"FFmpeg error for {rel_path} [CRF {crf}]")
+            print("-" * 60)
+            for line in snippet:
+                print(line)
+            if len(stderr_lines) > 10:
+                print("... (truncated)")
+            print(f"{'=' * 30}  END  {'=' * 30}\n")
+            
+            if process_registry is not None:
+                process_registry.pop(os.getpid(), None)
 
-        # Close the UI bar if it exists
-        if event_queue is not None:
-            event_queue.put({"op": "finish", "bar_id": f"file_slot_{slot_idx:02}"})
+            # Close the UI bar if it exists
+            if event_queue is not None:
+                event_queue.put({"op": "finish", "bar_id": f"file_slot_{slot_idx:02}"})
 
-        return [src_file, crf, "failed", f"FFmpeg failed for {rel_path} (see log)"]
+            return [src_file, crf, "failed", f"FFmpeg failed for {rel_path} (see log)"]
         else:
             return [src_file, crf, "failed-paused", f"Main thread for {rel_path} is paused"]
 
