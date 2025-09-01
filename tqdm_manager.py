@@ -10,7 +10,6 @@ from helpers.format_elapsed import format_elapsed
 from helpers.format_size import format_size
 from helpers.format_time import format_time
 from helpers.clear_terminal_below_cursor import clear_terminal_below_cursor
-from helpers.call_http_url import call_http_url
 from datetime import datetime
 
 class BAR_TYPE(Enum):
@@ -50,7 +49,6 @@ class TqdmManager:
 
     def refresh_bars(self):
         if len(self.bars[BAR_TYPE.CHUNK]) > self.chunk_bar_limit:
-            call_http_url(f"Enforcing bar_limit coz: {len(self.bars[BAR_TYPE.CHUNK])} > {self.chunk_bar_limit}")
             self._enforce_chunk_bar_limit()
         self.change_state_of_bars(True)
         self.change_state_of_bars(False)
@@ -165,7 +163,6 @@ class TqdmManager:
             bar.update(n)
 
         bar.refresh()
-        call_http_url(f"Shifted bar_id:{bar_id} to {new_position}")
 
     def shift_all_bars_one_step_down(self):
         with self.lock:
@@ -325,7 +322,6 @@ class TqdmManager:
         if bar_entry.is_done:
             bar.bar_format = older_bar_entry.bar_format
             bar_entry.bar_format = older_bar_entry.bar_format
-
         self.bars[bar_type].append((bar_id, bar_entry))
         return bar
 
@@ -340,7 +336,6 @@ class TqdmManager:
                 return
 
             if bar_type == BAR_TYPE.OTHER:
-                call_http_url(f"Shifting all bars one step down because of: {metadata.get('name')}")
                 self.shift_all_bars_one_step_down()
 
             desc = self._generate_desc(bar_type, bar_id, metadata)
@@ -394,7 +389,6 @@ class TqdmManager:
                 self.create_slot_bar(int(bar_id[-2:]))
             elif bar_type == BAR_TYPE.OTHER:
                 self.remove_bar_and_get_bar_entry(bar_id, isRefreshBars=False)
-                call_http_url(f"Shifting all bars one step up because of: {bar_entry.metadata.get('name')}")
                 self.shift_all_bars_one_step_up()
             bar_entry.is_done=True
             self.refresh_bars()
