@@ -5,8 +5,8 @@ import math
 from collections import deque
 from helpers.logging_utils import log
 from includes.state import pause_flag
+from config import CPU_PERCENT_BENCHMARK_TO_PAUSE
 
-cpu_percent_benchmark_to_pause = 10
 cpu_usage_history = deque(maxlen=10)
 
 def get_filtered_cpu_usage():
@@ -49,9 +49,9 @@ def cpu_watchdog(stop_event):
         avg_usage = sum(cpu_usage_history) / len(cpu_usage_history)
         log(f"[Monitor] Avg CPU usage (last {len(cpu_usage_history)}): {avg_usage:.2f}%", level="debug")
 
-        if math.ceil(avg_usage) > cpu_percent_benchmark_to_pause:
+        if math.ceil(avg_usage) > CPU_PERCENT_BENCHMARK_TO_PAUSE:
             if not pause_flag.is_set():
-                log(f"CPU usage ({math.ceil(avg_usage)}%) exceeds {cpu_percent_benchmark_to_pause}%. Pausing encoding...", level="debug")
+                log(f"CPU usage ({math.ceil(avg_usage)}%) exceeds {CPU_PERCENT_BENCHMARK_TO_PAUSE}%. Pausing encoding...", level="debug")
                 pause_flag.set()
         else:
             if pause_flag.is_set():
