@@ -12,6 +12,7 @@ from helpers.format_size import format_size
 from helpers.format_time import format_time
 from helpers.call_http_url import call_http_url
 from helpers.clear_terminal_below_cursor import clear_terminal_below_cursor
+from config import MAX_WORKERS
 
 BAR_TYPE_OTHER = "other"
 BAR_TYPE_FILE = "file"
