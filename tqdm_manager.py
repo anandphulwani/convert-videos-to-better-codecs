@@ -244,6 +244,77 @@ class TqdmManager:
 
             self._refresh_positions()
 
+    # -------------------------- Event-queue interface --------------------------
+    def attach_event_queue(self, q: "mp.Queue"):
+        """
+        Attach a multiprocessing Queue and start a background thread in the main
+        process to consume progress events.
+        """
+        self._event_queue = q
+        if self._event_thread and self._event_thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._event_thread = threading.Thread(target=self._event_loop, daemon=True)
+        self._event_thread.start()
+
+    def _event_loop(self):
+        while not self._stop_event.is_set():
+            try:
+                msg = self._event_queue.get(timeout=0.2)
+            except Empty:
+                continue
+            if msg is None:
+                # graceful stop signal
+                break
+            try:
+                op = msg.get("op")
+                if op == "create":
+                    self.create_bar(
+                        bar_type=msg["bar_type"],
+                        bar_id=msg["bar_id"],
+                        total=msg.get("total", 0),
+                        metadata=msg.get("metadata", {}),
+                        unit=msg.get("unit", "it"),
+                        unit_scale=msg.get("unit_scale", False),
+                        unit_divisor=msg.get("unit_divisor", 1),
+                    )
+                elif op == "update":
+                    self.progress(msg["bar_id"], msg["current"])
+                elif op == "finish":
+                    self.finish_bar(msg["bar_id"])
+                elif op == "close_all":
+                    # Optional: close all file bars (e.g., on shutdown)
+                    for bid in list(self.bar_ids.keys()):
+                        self.finish_bar(bid)
+                else:
+                    # Unknown op; ignore
+                    pass
+            except Exception:
+                # never let UI thread crash
+                pass
+
+    def stop_event_loop(self):
+        if not self._event_thread:
+            return
+        self._stop_event.set()
+        # Unblock queue .get()
+        try:
+            if self._event_queue is not None:
+                self._event_queue.put_nowait(None)
+        except Exception:
+            pass
+        self._event_thread.join(timeout=2)
+        self._event_thread = None
+
+# --------------------------- module-level helpers ---------------------------
+def create_event_queue(ctx: "mp.context.BaseContext" = None) -> "mp.Queue":
+    """
+    Create a multiprocessing Queue appropriate for your start method.
+    Call this in the main process and pass it into workers.
+    """
+    if ctx is None:
+        ctx = mp.get_context()  # use default
+    return ctx.Queue()
 
 def get_tqdm_manager():
     global _instance
