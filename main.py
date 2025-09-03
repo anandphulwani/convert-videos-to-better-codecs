@@ -156,6 +156,7 @@ def main():
     finally:
         job_manager.shutdown()
         tqdm_manager.stop_event_loop()
+        tqdm_manager.pause_tqdm_manager()
         cleanup_working_folders()
         move_logs_to_central_output()
         stop_logging()
