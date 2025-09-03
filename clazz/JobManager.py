@@ -445,7 +445,6 @@ class JobManager:
 
     def _gracefully_stop_workers(self):
         for p in self.processes:
-            p.join(timeout=3)
             if p.is_alive():
                 p.terminate()
                 p.join(timeout=2)
@@ -460,7 +459,7 @@ class JobManager:
                     continue
                 elif t.name == "_start_preloader":
                     continue
-            t.join(timeout=2)
+            t.join(timeout=0.5)
         if not is_pause:
             self.light_threads.clear()
 
