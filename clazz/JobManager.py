@@ -15,7 +15,7 @@ from config import (
 )
 from helpers.get_topmost_dir import get_topmost_dir
 from helpers.remove_topmost_dir import remove_topmost_dir
-from helpers.logging_utils import log
+from helpers.logging_utils import log, setup_logging
 from helpers.copy_and_move_with_progress import copy_with_progress, move_with_progress
 from helpers.remove_path import remove_path
 from includes.claim_files import claim_files
@@ -93,10 +93,11 @@ class JobManager:
         while not stop_event.is_set():
             if pause_flag.is_set():
                 if not was_paused:
-                    log("Pause detected — stopping workers and clearing TMP_PROCESSING...", level="warning")
+                    log("Pause detected — stopping workers and clearing TMP_PROCESSING...", level="info")
                     self.pause_event.set()
                     tqdm_manager.pause_tqdm_manager()
                     self.pause()
+                    move_logs_to_central_output()
                     clear_tmp_processing()
                     was_paused = True
             else:
@@ -107,6 +108,7 @@ class JobManager:
                     self._preload_existing_input_chunks()
                     self._start_preloader()
                     self.pause_event.clear()
+                    setup_logging()
             time.sleep(1)
 
     def _start_preloader(self):
