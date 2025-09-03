@@ -7,7 +7,6 @@ import threading
 import time
 from multiprocessing import Manager, Process, JoinableQueue, RLock, Event, Value
 from queue import Empty
-from tqdm import tqdm
 from dataclasses import dataclass
 
 from config import ( 
@@ -81,7 +80,7 @@ class JobManager:
 
     def _start_workers(self):
         # One dedicated UI "slot" per worker
-        for slot_idx in range(self.max_workers):
+        for slot_idx in range(1, self.max_workers + 1):
             p = Process(target=self._worker_loop, args=(slot_idx, self.progress_queue), daemon=True)
             p.start()
             self.processes.append(p)
@@ -126,8 +125,6 @@ class JobManager:
             self.total_tasks.value += 1
 
     def _worker_loop(self, slot_idx: int, progress_queue):
-        # idle_tqdm = None
-        status_bar = tqdm(total=1, position=slot_idx, bar_format='{desc}') #, dynamic_ncols=True)
         while not self.stop_event.is_set():
             try:
                 task = self.task_queue.get(timeout=1)
@@ -145,6 +142,7 @@ class JobManager:
                     task.src_path,
                     task.rel_path,
                     task.crf,
+                    slot_idx,
                     self.bytes_encoded,
                     process_registry=self.process_registry,
                     chunk_progress=self.chunk_progress,

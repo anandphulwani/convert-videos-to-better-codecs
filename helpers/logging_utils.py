@@ -1,17 +1,44 @@
 import logging
 import datetime
+import platform
+import threading
+import multiprocessing as mp
 from tqdm import tqdm
+from queue import Empty
+from dataclasses import dataclass
+from tqdm_manager import get_tqdm_manager
 
 from config import args
 
+# Global log file names
 LOG_FILE = None
 ERROR_LOG_FILE = None
 
-# --- Logging Setup ---
+# Global logging queue
+if platform.system() == "Windows":
+    ctx = mp.get_context("spawn")
+else:
+    # Use 'fork' where available (typically Unix-based systems), else fallback to 'spawn'
+    try:
+        ctx = mp.get_context("fork")
+    except ValueError:
+        ctx = mp.get_context("spawn")
+
+LOG_QUEUE = ctx.Queue()
+tqdm_manager = get_tqdm_manager()
+
+# --- Log Message Structure ---
+@dataclass
+class LogMessage:
+    level: str
+    message: str
+
+# --- Logging Filter ---
 class ErrorWarningFilter(logging.Filter):
     def filter(self, record):
         return record.levelno >= logging.WARNING
 
+# --- Setup Logging ---
 def setup_logging():
     global LOG_FILE, ERROR_LOG_FILE
 
@@ -19,28 +46,55 @@ def setup_logging():
     LOG_FILE = f'./av1_job_{timestamp}.log'
     ERROR_LOG_FILE = f'./errors_av1_job_{timestamp}.log'
 
+    # Clear any existing handlers
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
 
+    # File handler (debug/info)
     file_handler = logging.FileHandler(LOG_FILE)
     file_handler.setLevel(logging.DEBUG if args.debug else logging.INFO)
     file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
 
+    # Error log handler (warnings and above)
     error_handler = logging.FileHandler(ERROR_LOG_FILE)
     error_handler.setLevel(logging.WARNING)
     error_handler.addFilter(ErrorWarningFilter())
     error_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
 
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.DEBUG if args.debug else logging.INFO)
-    console_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
-
+    # Register handlers
     logging.getLogger().setLevel(logging.DEBUG if args.debug else logging.INFO)
-    # logging.getLogger().handlers = [file_handler, error_handler, console_handler]
     logging.getLogger().handlers = [file_handler, error_handler]
 
+    # Start log consumer thread
+    threading.Thread(target=_log_consumer, daemon=True).start()
+
+# --- Logging Function ---
 def log(msg, level="info"):
-    level = level.lower()
+    """
+    Thread-safe and process-safe log entry via queue.
+    """
+    try:
+        LOG_QUEUE.put_nowait(LogMessage(level=level.lower(), message=msg))
+    except Exception:
+        pass  # avoid crashing in case of failure
+
+# --- Log Consumer (Main Process) ---
+def _log_consumer():
+    while True:
+        try:
+            record = LOG_QUEUE.get(timeout=0.05)
+            if record is None:
+                break  # graceful shutdown
+            _emit_log(record)
+        except Empty:
+            continue
+        except Exception:
+            pass  # never crash consumer
+
+def _emit_log(record: LogMessage):
+    """
+    Emit log from the main process logger.
+    """
     level_map = {
         'debug': logging.DEBUG,
         'info': logging.INFO,
@@ -49,20 +103,33 @@ def log(msg, level="info"):
         'critical': logging.CRITICAL
     }
 
-    log_level_num = level_map.get(level, logging.INFO)
+    log_level_num = level_map.get(record.level, logging.INFO)
     configured_level = logging.DEBUG if args.debug else logging.INFO
 
-    # Only write to console if level >= current logging level
+    # Console output via tqdm if appropriate
     if log_level_num >= configured_level:
         clear_code = "\033[J"
-        tqdm.write(f"[{level.upper()}] {msg}{clear_code}")
+        tqdm.write(f"[{record.level.upper()}] {record.message}{clear_code}")
+        tqdm_manager.change_state_of_bars(True)
+        tqdm_manager.change_state_of_bars(False)
 
+    # Emit via logger
     logger_fn = {
         'debug': logging.debug,
         'info': logging.info,
         'warning': logging.warning,
         'error': logging.error,
         'critical': logging.critical
-    }.get(level, logging.info)
+    }.get(record.level, logging.info)
 
-    logger_fn(msg)
+    logger_fn(record.message)
+
+# --- Shutdown Cleanly ---
+def stop_logging():
+    """
+    Call from the main process before exit to stop log consumer cleanly.
+    """
+    try:
+        LOG_QUEUE.put_nowait(None)
+    except Exception:
+        pass
