@@ -35,7 +35,7 @@ class EncodingTask:
     chunk: str
 
 class JobManager:
-    def __init__(self):
+    def __init__(self, progress_queue=None):
         self.preload_done = threading.Event()
         self.max_workers = MAX_WORKERS
         self.crf_values = CRF_VALUES
@@ -64,6 +64,9 @@ class JobManager:
         self.chunk_totals = self.manager.dict()     # {chunk_name: total_bytes}
         self.chunk_progress = self.manager.dict()   # {chunk_name: Value('q')}
 
+        # Progress event queue for UI (lives in main process)
+        self.progress_queue = progress_queue
+
     def start(self):
         # Queue any pre-existing inputs first so workers won’t starve on startup.
         self._preload_existing_input_chunks()
@@ -79,7 +82,7 @@ class JobManager:
     def _start_workers(self):
         # One dedicated UI "slot" per worker
         for slot_idx in range(self.max_workers):
-            p = Process(target=self._worker_loop, args=(slot_idx,), daemon=True)
+            p = Process(target=self._worker_loop, args=(slot_idx, self.progress_queue), daemon=True)
             p.start()
             self.processes.append(p)
 
@@ -122,7 +125,7 @@ class JobManager:
         with self.total_tasks.get_lock():
             self.total_tasks.value += 1
 
-    def _worker_loop(self, slot_idx: int):
+    def _worker_loop(self, slot_idx: int, progress_queue):
         # idle_tqdm = None
         status_bar = tqdm(total=1, position=slot_idx, bar_format='{desc}') #, dynamic_ncols=True)
         while not self.stop_event.is_set():
@@ -146,6 +149,7 @@ class JobManager:
                     process_registry=self.process_registry,
                     chunk_progress=self.chunk_progress,
                     chunk_key=task.chunk,
+                    progress_queue=progress_queue,
                 )
                 self._handle_encoding_result(task, result)
             except Exception as e:
@@ -201,7 +205,6 @@ class JobManager:
             move_with_progress(paths["processing"], paths["output"], desc=f"Moving {os.path.basename(paths['processing'])}")
         else:
             log(f"Unknown supported result type: {status}", level="error")
-
 
     def _touch_file(self, path):
         os.makedirs(os.path.dirname(path), exist_ok=True)

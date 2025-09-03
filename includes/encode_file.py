@@ -20,6 +20,7 @@ def encode_file(
     process_registry=None,
     chunk_progress=None,
     chunk_key=None,
+    progress_queue=None,
 ):
     tmp_processing_dir = TMP_PROCESSING.format(crf)
     tmp_output_dir = TMP_OUTPUT_ROOT.format(crf)
@@ -48,6 +49,20 @@ def encode_file(
     log(f"Encoding {rel_path} [CRF {crf}]", level="debug")
 
     os.makedirs(os.path.dirname(tmp_processing_file), exist_ok=True)
+
+    # Create UI bar in main process via event
+    bar_id = f"{os.path.basename(src_file)}_{crf}_{int(time.time() * 1_000_000)}"
+    if progress_queue is not None:
+        progress_queue.put({
+            "op": "create",
+            "bar_type": "file",
+            "bar_id": bar_id,
+            "total": file_size,
+            "metadata": {"filename": os.path.basename(src_file)},
+            "unit": "B",
+            "unit_scale": True,
+            "unit_divisor": 1024
+        })
 
     if platform.system() == "Windows":
         # Create new process group on Windows
@@ -83,6 +98,13 @@ def encode_file(
                 if chunk_progress is not None and chunk_key is not None:
                     # per-chunk live byte progress
                     chunk_progress[chunk_key].value += delta_bytes
+                    if progress_queue is not None:
+                        # Send ABSOLUTE current value; manager computes delta
+                        progress_queue.put({
+                            "op": "update",
+                            "bar_id": bar_id,
+                            "current": current_progress
+                        })
                 last_progress = current_progress
 
         if line.startswith('progress=end'): 
@@ -92,7 +114,15 @@ def encode_file(
                 if chunk_progress is not None and chunk_key is not None:
                     # per-chunk live byte progress
                     chunk_progress[chunk_key].value += delta_bytes
-                last_progress = current_progress
+                last_progress = file_size
+                if progress_queue is not None:
+                    progress_queue.put({
+                        "op": "update",
+                        "bar_id": bar_id,
+                        "current": file_size
+                    })
+            if progress_queue is not None:
+                progress_queue.put({"op": "finish", "bar_id": bar_id})
 
     stdout, stderr = process.communicate()
 
@@ -118,6 +148,10 @@ def encode_file(
         
         if process_registry is not None:
             process_registry.pop(os.getpid(), None)
+
+        # Close the UI bar if it exists
+        if progress_queue is not None:
+            progress_queue.put({"op": "finish", "bar_id": bar_id})
 
         return [src_file, crf, "failed", f"FFmpeg failed for {rel_path} (see log)"]
 

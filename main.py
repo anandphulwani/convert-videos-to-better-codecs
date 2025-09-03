@@ -11,7 +11,7 @@ from helpers.logging_utils import setup_logging, log
 from clazz.JobManager import JobManager
 from includes.cleanup_working_folders import cleanup_working_folders
 from includes.move_logs_to_central_output import move_logs_to_central_output
-from tqdm_manager import get_tqdm_manager, BAR_TYPE_CHUNK
+from tqdm_manager import get_tqdm_manager, BAR_TYPE_CHUNK, create_event_queue
 
 def _restore():
     try:
@@ -35,10 +35,13 @@ def main():
 
     completed_once = set()
     # tqdm_manager = TqdmManager(base_position=0) # MAX_WORKERS + 1
+    event_queue = create_event_queue()
+    
     tqdm_manager = get_tqdm_manager()
+    tqdm_manager.attach_event_queue(event_queue)
     tqdm_manager.temporarily_disable_bars()
 
-    job_manager = JobManager()
+    job_manager = JobManager(progress_queue=event_queue)
     job_manager.start()
 
     try:
@@ -79,6 +82,7 @@ def main():
         log("Interrupted.", level="warning")
     finally:
         job_manager.shutdown()
+        tqdm_manager.stop_event_loop()
         cleanup_working_folders()
         move_logs_to_central_output()
         print("Exiting main program.")
