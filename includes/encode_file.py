@@ -8,7 +8,6 @@ import math
 from includes.ffmpeg import ffmpeg_get_duration, ffmpeg_av1_crf_cmd_generator
 from helpers.format_elapsed import format_elapsed
 from helpers.remove_topmost_dir import remove_topmost_dir
-from tqdm_manager import get_tqdm_manager, BAR_TYPE_FILE
 from config import TMP_OUTPUT_ROOT, FINAL_OUTPUT_ROOT, TMP_PROCESSING
 from helpers.logging_utils import log
 
@@ -16,6 +15,7 @@ def encode_file(
     src_file,
     rel_path,
     crf,
+    slot_idx,
     bytes_encoded,
     process_registry=None,
     chunk_progress=None,
@@ -51,14 +51,13 @@ def encode_file(
     os.makedirs(os.path.dirname(tmp_processing_file), exist_ok=True)
 
     # Create UI bar in main process via event
-    bar_id = f"{os.path.basename(src_file)}_{crf}_{int(time.time() * 1_000_000)}"
     if progress_queue is not None:
         progress_queue.put({
             "op": "create",
             "bar_type": "file",
-            "bar_id": bar_id,
+            "bar_id": f"file_slot_{slot_idx:02}",
             "total": file_size,
-            "metadata": {"filename": os.path.basename(src_file)},
+            "metadata": {"filename": os.path.basename(src_file), "slot_no": f"{slot_idx:02}", "crf": crf},
             "unit": "B",
             "unit_scale": True,
             "unit_divisor": 1024
@@ -102,7 +101,7 @@ def encode_file(
                         # Send ABSOLUTE current value; manager computes delta
                         progress_queue.put({
                             "op": "update",
-                            "bar_id": bar_id,
+                            "bar_id": f"file_slot_{slot_idx:02}",
                             "current": current_progress
                         })
                 last_progress = current_progress
@@ -118,11 +117,11 @@ def encode_file(
                 if progress_queue is not None:
                     progress_queue.put({
                         "op": "update",
-                        "bar_id": bar_id,
+                        "bar_id": f"file_slot_{slot_idx:02}",
                         "current": file_size
                     })
             if progress_queue is not None:
-                progress_queue.put({"op": "finish", "bar_id": bar_id})
+                progress_queue.put({"op": "finish", "bar_id": f"file_slot_{slot_idx:02}"})
 
     stdout, stderr = process.communicate()
 
