@@ -10,51 +10,6 @@ BAR_TYPE_OTHER = "other"
 BAR_TYPE_FILE = "file"
 BAR_TYPE_CHUNK = "chunk"
 
-# class PausableTqdm(tqdm):
-#     """
-#     A tqdm that supports pause/resume of its timer.
-#     While paused:
-#       - The displayed elapsed/remaining/rate stay frozen.
-#     On resume:
-#       - start_t / last_print_t are shifted forward by the pause duration,
-#         so the paused time is excluded from stats.
-#     """
-#     def __init__(self, *args, **kwargs):
-#         # tqdm sets self._time in __init__, so prepare our members first
-#         self._pause_start_wall = None      # wall-clock time.time() at pause
-#         self._orig_time_fn = None          # original tqdm time function
-#         self._frozen_now = None            # frozen timestamp for _time()
-#         super().__init__(*args, **kwargs)
-#         # keep a handle to tqdm's time function
-#         self._orig_time_fn = self._time
-
-#     def pause_timer(self):
-#         # Already paused? do nothing.
-#         if self._pause_start_wall is not None:
-#             return
-#         # Record when we paused
-#         self._pause_start_wall = time.time()
-#         # Freeze the internal clock at the current tqdm time
-#         self._frozen_now = self._orig_time_fn()
-#         # Replace tqdm's time function with a frozen one
-#         self._time = lambda: self._frozen_now
-
-#     def resume_timer(self):
-#         if self._pause_start_wall is None:
-#             return
-#         # How long were we paused (real wall time)?
-#         paused = time.time() - self._pause_start_wall
-#         self._pause_start_wall = None
-
-#         # Restore tqdm's time function
-#         self._time = self._orig_time_fn
-
-#         # Shift base times forward so paused gap is excluded from stats
-#         if getattr(self, "start_t", None) is not None:
-#             self.start_t += paused
-#         if getattr(self, "last_print_t", None) is not None:
-#             self.last_print_t += paused
-
 _instance = None
 
 class TqdmManager:
