@@ -11,8 +11,10 @@ from tqdm_manager import get_tqdm_manager
 from config import args
 
 # Global log file names
-LOG_FILE = None
-ERROR_LOG_FILE = None
+manager = mp.Manager()
+log_files_shared_state = manager.Namespace()
+log_files_shared_state.LOG_FILE = None
+log_files_shared_state.ERROR_LOG_FILE = None
 
 # Global logging queue
 if platform.system() == "Windows":
@@ -40,23 +42,22 @@ class ErrorWarningFilter(logging.Filter):
 
 # --- Setup Logging ---
 def setup_logging():
-    global LOG_FILE, ERROR_LOG_FILE
 
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    LOG_FILE = f'./av1_job_{timestamp}.log'
-    ERROR_LOG_FILE = f'./errors_av1_job_{timestamp}.log'
+    log_files_shared_state.LOG_FILE = f'./av1_job_{timestamp}.log'
+    log_files_shared_state.ERROR_LOG_FILE = f'./errors_av1_job_{timestamp}.log'
 
     # Clear any existing handlers
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
 
     # File handler (debug/info)
-    file_handler = logging.FileHandler(LOG_FILE)
+    file_handler = logging.FileHandler(log_files_shared_state.LOG_FILE)
     file_handler.setLevel(logging.DEBUG if args.debug else logging.INFO)
     file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
 
     # Error log handler (warnings and above)
-    error_handler = logging.FileHandler(ERROR_LOG_FILE)
+    error_handler = logging.FileHandler(log_files_shared_state.ERROR_LOG_FILE)
     error_handler.setLevel(logging.WARNING)
     error_handler.addFilter(ErrorWarningFilter())
     error_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
