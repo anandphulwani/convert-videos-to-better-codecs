@@ -345,7 +345,7 @@ class JobManager:
         self._remove_processing_folder(chunk_folder)
         self._transfer_failed_tasks()
         self._move_outputs_and_mark_done(chunk_folder)
-        move_logs_to_central_output()
+        move_logs_to_central_output(True)
 
     def _remove_skipped_files(self, chunk_folder):
         for crf in CRF_VALUES:
