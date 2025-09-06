@@ -57,28 +57,23 @@ class TqdmManager:
 
     def remove_bar_from_gui(self, bar):
         call_http_url("remove_bar_from_gui 01")
-        bar.clear()
-        call_http_url("remove_bar_from_gui 02")
-        bar.refresh()
-        call_http_url("remove_bar_from_gui 03")
         bar.close()
-        call_http_url("remove_bar_from_gui 04")
-        del bar
+        call_http_url("remove_bar_from_gui 02")
         clear_terminal_below_cursor()
-        call_http_url("remove_bar_from_gui 05")
+        call_http_url("remove_bar_from_gui 03")
     
     def remove_bar_and_get_bar_entry(self, bar_id, bar_type = None, isRefreshBars = True):
-        call_http_url("remove_bar_and_get_bar_entry 01")
+        # call_http_url("remove_bar_and_get_bar_entry 01")
         res = self.get_or_pop_bar(bar_id, bar_type, pop=True)
-        call_http_url("remove_bar_and_get_bar_entry 02")
+        # call_http_url("remove_bar_and_get_bar_entry 02")
         bar_entry = res[2]
         bar = bar_entry.bar
-        call_http_url("remove_bar_and_get_bar_entry 03")
+        # call_http_url("remove_bar_and_get_bar_entry 03")
         self.remove_bar_from_gui(bar)
-        call_http_url("remove_bar_and_get_bar_entry 04")
+        # call_http_url("remove_bar_and_get_bar_entry 04")
         isRefreshBars = False
         self.refresh_bars() if isRefreshBars else None
-        call_http_url("remove_bar_and_get_bar_entry 05")
+        # call_http_url("remove_bar_and_get_bar_entry 05")
         return bar_entry
 
     def __init__(self, base_position=0):
@@ -304,6 +299,7 @@ class TqdmManager:
         else:
             raise ValueError("Unsupported bar type")
 
+        call_http_url(f"Creating bar start: {bar_id}")
         bar = tqdm(
             total=total,
             desc=desc,
@@ -317,6 +313,7 @@ class TqdmManager:
             leave=False
         )
         bar.update(1 if bar_type == BAR_TYPE.CHUNK_DIVIDER or bar_type == BAR_TYPE.FILE_WAITING else 0)
+        call_http_url(f"Creating bar done: {bar_id}")
         bar_entry = BarEntry(
             bar_id=bar_id,
             bar_type=bar_type,
