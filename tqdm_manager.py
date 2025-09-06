@@ -82,7 +82,7 @@ class TqdmManager:
         return bar_entry
 
     def __init__(self, base_position=0):
-        self.lock = threading.RLock()
+        self.lock = mp.RLock()
         self.bars = {bar_type: [] for bar_type in BAR_TYPE}
         self.base_position = base_position
         self._event_thread = None
