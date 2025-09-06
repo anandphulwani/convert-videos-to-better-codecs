@@ -222,9 +222,12 @@ class JobManager:
             except Exception as e:
                 log(f"Worker loop encountered an error: {e}", level="error")
             finally:
+                print("\n\nJobManager: finally 01.\n\n")
                 with self.completed_tasks.get_lock():
                     self.completed_tasks.value += 1
+                print("\n\nJobManager: finally 02.\n\n")
                 self._decrement_jobs()
+                print("\n\nJobManager: finally 03.\n\n")
                 self.task_queue.task_done()
                 print("\n\nJobManager: completed finally.\n\n")
 
