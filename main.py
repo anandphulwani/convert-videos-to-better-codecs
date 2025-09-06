@@ -166,6 +166,7 @@ def main():
         # tqdm_manager.stop_event_loop()
         call_http_url("Removing tqdm_manager bars.")
         tqdm_manager.pause_tqdm_manager()
+        call_http_url("Now cleanup working folders.")
         cleanup_working_folders()
         call_http_url("Moving logs to central output.")
         move_logs_to_central_output()

@@ -7,6 +7,7 @@ import multiprocessing as mp
 from tqdm import tqdm
 from dataclasses import dataclass
 from config import MAX_WORKERS
+from helpers.call_http_url import call_http_url
 from helpers.format_elapsed import format_elapsed
 from helpers.format_size import format_size
 from helpers.format_time import format_time
@@ -55,19 +56,29 @@ class TqdmManager:
         self.change_state_of_bars(False)
 
     def remove_bar_from_gui(self, bar):
+        call_http_url("remove_bar_from_gui 01")
         bar.clear()
+        call_http_url("remove_bar_from_gui 02")
         bar.refresh()
+        call_http_url("remove_bar_from_gui 03")
         bar.close()
+        call_http_url("remove_bar_from_gui 04")
         del bar
         clear_terminal_below_cursor()
+        call_http_url("remove_bar_from_gui 05")
     
     def remove_bar_and_get_bar_entry(self, bar_id, bar_type = None, isRefreshBars = True):
+        call_http_url("remove_bar_and_get_bar_entry 01")
         res = self.get_or_pop_bar(bar_id, bar_type, pop=True)
+        call_http_url("remove_bar_and_get_bar_entry 02")
         bar_entry = res[2]
         bar = bar_entry.bar
+        call_http_url("remove_bar_and_get_bar_entry 03")
         self.remove_bar_from_gui(bar)
+        call_http_url("remove_bar_and_get_bar_entry 04")
         isRefreshBars = False
         self.refresh_bars() if isRefreshBars else None
+        call_http_url("remove_bar_and_get_bar_entry 05")
         return bar_entry
 
     def __init__(self, base_position=0):
@@ -454,7 +465,9 @@ class TqdmManager:
         self._event_thread = None
 
     def pause_tqdm_manager(self):
+        call_http_url("pause_tqdm_manager: trying to acquire self.lock")
         with self.lock:
+            call_http_url("pause_tqdm_manager: Inside the self.lock")
             self._pause_event.set()
             try:
                 if self._event_queue is not None:
@@ -465,10 +478,12 @@ class TqdmManager:
                             break
             except Exception:
                 pass
-
+    
+            call_http_url("pause_tqdm_manager: Removing all the bars")
             for bar_list in self.bars.values():
                 for bar_id_rm, _ in list(bar_list):
                     self.remove_bar_and_get_bar_entry(bar_id_rm)
+            call_http_url("pause_tqdm_manager: Removed all the bars")
 
             clear_terminal_below_cursor()
 
