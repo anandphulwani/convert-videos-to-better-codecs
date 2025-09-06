@@ -55,12 +55,11 @@ class TqdmManager:
         self.change_state_of_bars(False)
 
     def remove_bar_from_gui(self, bar):
-        with tqdm.get_lock():
-            bar.clear()
-            bar.refresh()
-            bar.close()
-            del bar
-            clear_terminal_below_cursor()
+        bar.clear()
+        bar.refresh()
+        bar.close()
+        del bar
+        clear_terminal_below_cursor()
     
     def remove_bar_and_get_bar_entry(self, bar_id, bar_type = None, isRefreshBars = True):
         res = self.get_or_pop_bar(bar_id, bar_type, pop=True)
