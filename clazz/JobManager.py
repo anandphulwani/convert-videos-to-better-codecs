@@ -218,6 +218,7 @@ class JobManager:
                     chunk_key=task.chunk,
                     pause_event=self.pause_event
                 )
+                call_http_url("JobManager: encode_file done.")
                 self._handle_encoding_result(task, result)
                 call_http_url("JobManager: handled everything.")
             except Exception as e:
@@ -494,10 +495,12 @@ class JobManager:
     def is_done(self, is_chunk_completed=False):
         # Deterministic: all tasks that were enqueued have completed,
         # and the preloader has finished creating tasks.
-        if is_chunk_completed:
+        if is_chunk_completed and not self.preload_done.is_set():
             call_http_url(f"Job_Manager.is_done(): self.preload_done.is_set(): {self.preload_done.is_set()}")
-            call_http_url(f"Job_Manager.is_done(): self.completed_tasks.value >= self.total_tasks.value: {self.completed_tasks.value >= self.total_tasks.value}")
-            call_http_url(f"Job_Manager.is_done(): self.active_jobs.value: {self.active_jobs.value}")
+        if is_chunk_completed and not self.completed_tasks.value >= self.total_tasks.value:
+            call_http_url(f"Job_Manager.is_done(): self.completed_tasks.value ({self.completed_tasks.value}) >= self.total_tasks.value ({self.total_tasks.value}): {self.completed_tasks.value >= self.total_tasks.value}")
+        if is_chunk_completed and not self.active_jobs.value == 0:
+            call_http_url(f"Job_Manager.is_done(): self.active_jobs.value ({self.active_jobs.value}) == 0 : {self.active_jobs.value == 0}")
         return (
             self.preload_done.is_set() and
             self.completed_tasks.value >= self.total_tasks.value and
