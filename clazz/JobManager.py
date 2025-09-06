@@ -13,6 +13,7 @@ from config import (
     TMP_PROCESSING, TMP_FAILED_ROOT, TMP_SKIPPED_ROOT,
     MAX_WORKERS, CHUNK_SIZE, LOCKS_DIR
 )
+from helpers.call_http_url import call_http_url
 from helpers.get_topmost_dir import get_topmost_dir
 from helpers.remove_topmost_dir import remove_topmost_dir
 from helpers.logging_utils import log, setup_logging
@@ -218,18 +219,18 @@ class JobManager:
                     pause_event=self.pause_event
                 )
                 self._handle_encoding_result(task, result)
-                print("\n\nJobManager: handled everything.\n\n")
+                call_http_url("JobManager: handled everything.")
             except Exception as e:
                 log(f"Worker loop encountered an error: {e}", level="error")
             finally:
-                print("\n\nJobManager: finally 01.\n\n")
+                call_http_url("JobManager: finally 01.")
                 with self.completed_tasks.get_lock():
                     self.completed_tasks.value += 1
-                print("\n\nJobManager: finally 02.\n\n")
+                call_http_url("JobManager: finally 02.")
                 self._decrement_jobs()
-                print("\n\nJobManager: finally 03.\n\n")
+                call_http_url("JobManager: finally 03.")
                 self.task_queue.task_done()
-                print("\n\nJobManager: completed finally.\n\n")
+                call_http_url("JobManager: completed finally.")
 
     def _handle_encoding_result(self, task, result):
         crf = task.crf
@@ -490,9 +491,13 @@ class JobManager:
     def get_encoded_bytes(self):
         return self.bytes_encoded.value
 
-    def is_done(self):
+    def is_done(self, is_chunk_completed=False):
         # Deterministic: all tasks that were enqueued have completed,
         # and the preloader has finished creating tasks.
+        if is_chunk_completed:
+            call_http_url(f"Job_Manager.is_done(): self.preload_done.is_set(): {self.preload_done.is_set()}")
+            call_http_url(f"Job_Manager.is_done(): self.completed_tasks.value >= self.total_tasks.value: {self.completed_tasks.value >= self.total_tasks.value}")
+            call_http_url(f"Job_Manager.is_done(): self.active_jobs.value: {self.active_jobs.value}")
         return (
             self.preload_done.is_set() and
             self.completed_tasks.value >= self.total_tasks.value and

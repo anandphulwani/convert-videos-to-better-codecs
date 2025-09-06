@@ -71,6 +71,7 @@ import atexit
 import shutil
 
 from config import MACHINE_ID
+from helpers.call_http_url import call_http_url
 from helpers.logging_utils import setup_logging, stop_logging, log
 from clazz.JobManager import JobManager
 from includes.cleanup_working_folders import cleanup_working_folders
@@ -108,6 +109,8 @@ def main():
     
     job_manager = JobManager()
     job_manager.start()
+
+    is_chunk_completed = False
     
     try:
         while True:
@@ -144,8 +147,10 @@ def main():
                 if chunk_progress_value >= job_manager.chunk_totals.get(chunk_name, 0) and chunk_name not in completed_once:
                     completed_once.add(chunk_name)
                     event_queue.put({"op": "finish", "bar_id": chunk_name})
+                    call_http_url(f"chunk_name: {chunk_name} is finished.")
+                    is_chunk_completed = True
 
-            if job_manager.is_done():
+            if job_manager.is_done(is_chunk_completed):
                 log("All tasks processed. Exiting main loop.")
                 break
 
@@ -154,16 +159,18 @@ def main():
     except KeyboardInterrupt:
         log("Interrupted.", level="warning")
     finally:
+        call_http_url("Shutting down Job Manager.")
         log("Shutting down Job Manager.")
         job_manager.shutdown()
-        print("\n\nStopping tqdm_manager event_loop.\n\n")
+        call_http_url("Stopping tqdm_manager event_loop.")
         tqdm_manager.stop_event_loop()
-        print("\n\nRemoving tqdm_manager bars.\n\n")
+        call_http_url("Removing tqdm_manager bars.")
         tqdm_manager.pause_tqdm_manager()
         cleanup_working_folders()
-        print("\n\nMoving logs to central output.\n\n")
+        call_http_url("Moving logs to central output.")
         move_logs_to_central_output()
         stop_logging()
+        call_http_url("Exiting main program.")
         print("Exiting main program.")
 
 if __name__ == '__main__':
