@@ -513,6 +513,7 @@ def get_random_value_for_id():
 def get_tqdm_manager():
     global _instance, _event_queue
     if _instance is None:
+        call_http_url(">>>>>>>>>>>>>>>>>>> Creating TqdmManager")
         _instance = TqdmManager(base_position=MAX_WORKERS)
     if _event_queue is None:
         _event_queue = create_event_queue()
