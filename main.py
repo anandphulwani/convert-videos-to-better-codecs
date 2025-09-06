@@ -154,10 +154,14 @@ def main():
     except KeyboardInterrupt:
         log("Interrupted.", level="warning")
     finally:
+        log("Shutting down Job Manager.")
         job_manager.shutdown()
+        print("\n\nStopping tqdm_manager event_loop.\n\n")
         tqdm_manager.stop_event_loop()
+        print("\n\nRemoving tqdm_manager bars.\n\n")
         tqdm_manager.pause_tqdm_manager()
         cleanup_working_folders()
+        print("\n\nMoving logs to central output.\n\n")
         move_logs_to_central_output()
         stop_logging()
         print("Exiting main program.")

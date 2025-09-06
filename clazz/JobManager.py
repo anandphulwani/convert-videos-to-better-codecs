@@ -218,6 +218,7 @@ class JobManager:
                     pause_event=self.pause_event
                 )
                 self._handle_encoding_result(task, result)
+                print("\n\nJobManager: handled everything.\n\n")
             except Exception as e:
                 log(f"Worker loop encountered an error: {e}", level="error")
             finally:
@@ -225,6 +226,7 @@ class JobManager:
                     self.completed_tasks.value += 1
                 self._decrement_jobs()
                 self.task_queue.task_done()
+                print("\n\nJobManager: completed finally.\n\n")
 
     def _handle_encoding_result(self, task, result):
         crf = task.crf
