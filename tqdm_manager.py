@@ -35,9 +35,6 @@ class BarEntry:
     bar_format: str | None = None
     is_done: bool = False
 
-_instance = None
-_event_queue = None
-
 class TqdmManager:
     def change_state_of_bars(self, disable):
         with self.lock:
@@ -429,6 +426,12 @@ class TqdmManager:
                     self.progress(msg["bar_id"], msg["current"])
                 elif op == "finish":
                     self.finish_bar(msg["bar_id"])
+                elif op == "pause_tqdm_manager":
+                    self.pause_tqdm_manager()
+                elif op == "resume_tqdm_manager":
+                    self.resume_tqdm_manager()
+                elif op == "change_state_of_bars":
+                    self.change_state_of_bars(msg["status"])
                 elif op == "close_all":
                     # Optional: close all file bars (e.g., on shutdown)
                     for bar_list in self.bars.values():
@@ -498,17 +501,5 @@ def get_random_value_for_id():
     formatted_number = f"{number:04}"
 
     return f"{timestamp}{formatted_number}"
-
-def get_tqdm_manager():
-    global _instance, _event_queue
-    if _instance is None:
-        _instance = TqdmManager(base_position=MAX_WORKERS)
-    if _event_queue is None:
-        _event_queue = create_event_queue()
-        _instance.attach_event_queue(_event_queue)
-    return _instance
-
-def get_event_queue():
-    return _event_queue
 # endregion
 

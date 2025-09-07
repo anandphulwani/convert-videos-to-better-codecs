@@ -70,13 +70,13 @@ import sys
 import atexit
 import shutil
 
-from config import MACHINE_ID
+from config import MACHINE_ID, MAX_WORKERS
 from helpers.logging_utils import setup_logging, stop_logging, log
 from clazz.JobManager import JobManager
 from includes.cleanup_working_folders import cleanup_working_folders
 from includes.move_logs_to_central_output import move_logs_to_central_output
 from includes.state import pause_flag
-from tqdm_manager import get_tqdm_manager, get_event_queue, BAR_TYPE
+from tqdm_manager import TqdmManager, create_event_queue, BAR_TYPE
 
 def _restore():
     try:
@@ -94,8 +94,12 @@ atexit.register(_restore)
 
 # === Main ===
 def main():
-    setup_logging()
-    cleanup_working_folders()
+    event_queue = create_event_queue()
+    tqdm_manager = TqdmManager(base_position=MAX_WORKERS)
+    tqdm_manager.attach_event_queue(event_queue)
+
+    setup_logging(event_queue)
+    cleanup_working_folders(event_queue)
     log(f"Starting AV1 job processor on {MACHINE_ID}")
 
     completed_once = set()
@@ -103,10 +107,7 @@ def main():
     last_progress = {}
     pause_flag.clear()
     
-    tqdm_manager = get_tqdm_manager()
-    event_queue = get_event_queue()
-    
-    job_manager = JobManager()
+    job_manager = JobManager(event_queue=event_queue)
     job_manager.start()
     
     try:
@@ -156,9 +157,9 @@ def main():
     finally:
         job_manager.shutdown()
         tqdm_manager.stop_event_loop()
-        tqdm_manager.pause_tqdm_manager()
-        cleanup_working_folders()
-        move_logs_to_central_output()
+        event_queue.put({"op": "pause_tqdm_manager"})
+        cleanup_working_folders(event_queue)
+        move_logs_to_central_output(event_queue)
         stop_logging()
         print("Exiting main program.")
 

@@ -5,8 +5,8 @@ from helpers.get_all_files_sorted import get_all_files_sorted
 from helpers.get_next_chunk_dir import get_next_chunk_dir
 from helpers.logging_utils import log
 
-def claim_files():
-    all_files = get_all_files_sorted(TO_ASSIGN)
+def claim_files(event_queue):
+    all_files = get_all_files_sorted(TO_ASSIGN, event_queue)
     chunk, size = [], 0
     for full_path, rel_path in all_files:
         file_size = os.path.getsize(full_path)

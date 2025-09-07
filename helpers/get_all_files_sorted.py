@@ -1,12 +1,11 @@
 import os
 from helpers.logging_utils import log
-from tqdm_manager import get_event_queue, get_random_value_for_id, BAR_TYPE
+from tqdm_manager import get_random_value_for_id, BAR_TYPE
 
-def get_all_files_sorted(base_dir):
+def get_all_files_sorted(base_dir, event_queue):
     log(f"Scanning directory: {base_dir}", level="debug")
     all_files = []
 
-    event_queue=get_event_queue()
     bar_id = get_random_value_for_id()
     index = 1
     for root, _, files in os.walk(base_dir):

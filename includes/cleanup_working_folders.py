@@ -1,7 +1,6 @@
 import os
 
 from helpers.logging_utils import log
-from helpers.get_all_files_sorted import get_all_files_sorted
 from helpers.find_all_dirs import find_all_dirs
 from helpers.remove_empty_dirs import remove_empty_dirs
 from helpers.remove_path import remove_path
@@ -16,7 +15,7 @@ def clear_tmp_processing():
     os.makedirs(os.path.dirname(TMP_PROCESSING), exist_ok=True)
     log(f"Cleared TMP_PROCESSING folder", level="debug")
 
-def cleanup_working_folders():
+def cleanup_working_folders(event_queue):
     log("Cleaning up WORKING folders...")
     clear_tmp_processing()
 
@@ -27,5 +26,5 @@ def cleanup_working_folders():
                      os.path.dirname(TMP_PROCESSING), os.path.dirname(TMP_OUTPUT_ROOT),
                      os.path.dirname(TMP_FAILED_ROOT), os.path.dirname(TMP_SKIPPED_ROOT)]
     all_dirs = find_all_dirs(all_main_dirs)
-    removed = remove_empty_dirs(all_dirs)
+    removed = remove_empty_dirs(all_dirs, event_queue)
     log(f"Removed {removed} empty directories.")

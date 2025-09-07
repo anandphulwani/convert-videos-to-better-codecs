@@ -27,7 +27,6 @@ from includes.remote_transfer_locks import try_acquire_remote_transfer_lock_loop
 from includes.cleanup_working_folders import clear_tmp_processing
 from includes.cpu_watchdog import cpu_watchdog
 from includes.state import pause_flag
-from tqdm_manager import get_tqdm_manager
 from helpers.logging_utils import log
 
 @dataclass
@@ -38,13 +37,14 @@ class EncodingTask:
     chunk: str
 
 class JobManager:
-    def __init__(self):
+    def __init__(self, event_queue):
         self.preload_done = threading.Event()
         self.max_workers = MAX_WORKERS
         self.crf_values = CRF_VALUES
         self.chunk_size = CHUNK_SIZE
         self.tmp_input_dir = TMP_INPUT
         self.in_progress_dir = IN_PROGRESS
+        self.event_queue = event_queue
 
         # IMPORTANT: JoinableQueue for proper completion semantics
         self.task_queue = JoinableQueue()
@@ -83,47 +83,46 @@ class JobManager:
         self.light_threads.append(t)
 
     def _start_pause_monitor(self):
-        t = threading.Thread(target=self._pause_monitor_loop, name="_start_pause_monitor", args=(self.stop_event,), daemon=True)
+        t = threading.Thread(target=self._pause_monitor_loop, name="_start_pause_monitor", args=(self.stop_event, self.event_queue), daemon=True)
         t.start()
         self.light_threads.append(t)
 
-    def _pause_monitor_loop(self, stop_event):
-        tqdm_manager = get_tqdm_manager()
+    def _pause_monitor_loop(self, stop_event, event_queue):
         was_paused = False
         while not stop_event.is_set():
             if pause_flag.is_set():
                 if not was_paused:
                     log("Pause detected — stopping workers and clearing TMP_PROCESSING...", level="info")
                     self.pause_event.set()
-                    tqdm_manager.pause_tqdm_manager()
+                    event_queue.put({"op": "pause_tqdm_manager"})
                     self.pause()
-                    move_logs_to_central_output()
+                    move_logs_to_central_output(event_queue)
                     clear_tmp_processing()
                     was_paused = True
             else:
                 if was_paused:
                     log("Resume detected — restarting workers...", level="info")
                     was_paused = False
-                    tqdm_manager.resume_tqdm_manager()
+                    event_queue.put({"op": "resume_tqdm_manager"})
                     self._preload_existing_input_chunks()
                     self._start_preloader()
                     self.pause_event.clear()
-                    setup_logging()
+                    setup_logging(event_queue)
             time.sleep(1)
 
     def _start_preloader(self):
-        t = threading.Thread(target=self._preload_loop, name="_start_preloader", args=(self.stop_event, self.pause_event), daemon=True)
+        t = threading.Thread(target=self._preload_loop, name="_start_preloader", args=(self.stop_event, self.pause_event, self.event_queue), daemon=True)
         t.start()
         self.light_threads.append(t)
 
     def _start_workers(self):
         # One dedicated UI "slot" per worker
         for slot_idx in range(1, self.max_workers + 1):
-            p = Process(target=self._worker_loop, args=(slot_idx,), daemon=True)
+            p = Process(target=self._worker_loop, args=(slot_idx, self.event_queue), daemon=True)
             p.start()
             self.processes.append(p)
 
-    def _preload_loop(self, stop_event, pause_event):
+    def _preload_loop(self, stop_event, pause_event, event_queue):
         log("Preloader started")
         while (not stop_event.is_set()) and (not self.preload_done.is_set()):
             if pause_event.is_set():
@@ -145,7 +144,7 @@ class JobManager:
                     renew_thread.start()
 
                     try:
-                        chunk = claim_files()
+                        chunk = claim_files(event_queue)
                         if chunk:
                             _, _, first_rel = chunk[0]
                             chunk_name = get_topmost_dir(first_rel)
@@ -163,8 +162,8 @@ class JobManager:
 
                             for src, dst, rel in chunk:
                                 local_dst = os.path.join(self.tmp_input_dir, rel)
-                                copy_with_progress(src, local_dst, desc=f"Preloading (Copy) to Local: {os.path.basename(rel)}")
-                                move_with_progress(src, dst, desc=f"Preloading (Move) to InProgress: {os.path.basename(rel)}")
+                                copy_with_progress(src, local_dst, event_queue, desc=f"Preloading (Copy) to Local: {os.path.basename(rel)}")
+                                move_with_progress(src, dst, event_queue, desc=f"Preloading (Move) to InProgress: {os.path.basename(rel)}")
                                 for crf in self.crf_values:
                                     self._enqueue_task(EncodingTask(local_dst, rel, crf, chunk_name))
                         else:
@@ -188,7 +187,7 @@ class JobManager:
         with self.total_tasks.get_lock():
             self.total_tasks.value += 1
 
-    def _worker_loop(self, slot_idx: int):
+    def _worker_loop(self, slot_idx: int, event_queue):
         while not self.stop_event.is_set():
             if self.pause_event.is_set():
                 time.sleep(5)
@@ -212,12 +211,13 @@ class JobManager:
                     task.crf,
                     slot_idx,
                     self.bytes_encoded,
+                    event_queue=event_queue,
                     process_registry=self.process_registry,
                     chunk_progress=self.chunk_progress,
                     chunk_key=task.chunk,
-                    pause_event=self.pause_event
+                    pause_event=self.pause_event,
                 )
-                self._handle_encoding_result(task, result)
+                self._handle_encoding_result(task, result, event_queue)
             except Exception as e:
                 log(f"Worker loop encountered an error: {e}", level="error")
             finally:
@@ -226,7 +226,7 @@ class JobManager:
                 self._decrement_jobs()
                 self.task_queue.task_done()
 
-    def _handle_encoding_result(self, task, result):
+    def _handle_encoding_result(self, task, result, event_queue):
         crf = task.crf
         paths = self._construct_paths(task)
         status = result[2]
@@ -244,8 +244,8 @@ class JobManager:
                 pass
 
         with self.file_moving_lock:
-            self._process_result_status(status, paths)
-            self._maybe_cleanup_and_finalize(task, paths)
+            self._process_result_status(status, paths, event_queue)
+            self._maybe_cleanup_and_finalize(task, paths, event_queue)
 
         if status != "failed-paused":
             log(f"[CRF {crf}] {status.upper()}: {result[3]}")
@@ -260,7 +260,7 @@ class JobManager:
             "skipped": os.path.join(TMP_SKIPPED_ROOT.format(crf), rel),
         }
 
-    def _process_result_status(self, status, paths):
+    def _process_result_status(self, status, paths, event_queue):
         if status in ("failed", "skipped-notsupported"):
             remove_path(paths["processing"])
             self._touch_file(paths["failed"])
@@ -271,7 +271,7 @@ class JobManager:
         elif status == "skipped-alreadyexists-tmp":
             pass
         elif status == "success":
-            move_with_progress(paths["processing"], paths["output"], desc=f"Moving {os.path.basename(paths['processing'])}")
+            move_with_progress(paths["processing"], paths["output"], event_queue, desc=f"Moving {os.path.basename(paths['processing'])}")
         else:
             log(f"Unknown supported result type: {status}", level="error")
 
@@ -314,7 +314,7 @@ class JobManager:
 
         log(f"Queued {task_count} tasks from existing TMP_INPUT chunk folders.")
 
-    def _maybe_cleanup_and_finalize(self, task, paths):
+    def _maybe_cleanup_and_finalize(self, task, paths, event_queue):
         if not self._all_crf_outputs_exist(task.rel_path):
             return
 
@@ -325,7 +325,7 @@ class JobManager:
         remove_empty_dirs_in_path(task.src_path, [chunk_path])
 
         if not os.listdir(chunk_path):
-            self._finalize_chunk(chunk_folder)
+            self._finalize_chunk(chunk_folder, event_queue)
 
     def _all_crf_outputs_exist(self, rel_path):
         for crf in CRF_VALUES:
@@ -338,14 +338,14 @@ class JobManager:
                 return False
         return True
 
-    def _finalize_chunk(self, chunk_folder):
+    def _finalize_chunk(self, chunk_folder, event_queue):
         self._touch_file(os.path.join(TMP_INPUT, f"{chunk_folder}.done"))
         os.rmdir(os.path.join(TMP_INPUT, chunk_folder))
         self._remove_skipped_files(chunk_folder)
         self._remove_processing_folder(chunk_folder)
-        self._transfer_failed_tasks()
-        self._move_outputs_and_mark_done(chunk_folder)
-        move_logs_to_central_output(True)
+        self._transfer_failed_tasks(event_queue)
+        self._move_outputs_and_mark_done(chunk_folder, event_queue)
+        move_logs_to_central_output(event_queue, True)
 
     def _remove_skipped_files(self, chunk_folder):
         for crf in CRF_VALUES:
@@ -353,7 +353,7 @@ class JobManager:
             remove_path(path)
             remove_empty_dirs_in_path(path, [os.path.dirname(os.path.dirname(TMP_SKIPPED_ROOT))])
 
-    def _transfer_failed_tasks(self):
+    def _transfer_failed_tasks(self, event_queue):
         for crf in CRF_VALUES:
             failed_root = TMP_FAILED_ROOT.format(crf)
             for root, _, files in os.walk(failed_root):
@@ -366,7 +366,7 @@ class JobManager:
 
                     try:
                         if os.path.exists(in_progress_path):
-                            move_with_progress(in_progress_path, failed_path)
+                            move_with_progress(in_progress_path, failed_path, event_queue)
                             log(f"Moved failed task from in_progress to failed: {rel_path}")
                         else:
                             log(f"In-progress file for failed task not found: {in_progress_path}", level="warning")
@@ -379,7 +379,7 @@ class JobManager:
                             remove_path(delete_path)
                             log(f"Deleted failed file from tmp_failed (crf={crf_failed}): {delete_path}")
 
-    def _move_outputs_and_mark_done(self, chunk_folder):
+    def _move_outputs_and_mark_done(self, chunk_folder, event_queue):
         all_crf_file_sets = []
         for crf in CRF_VALUES:
             chunk_crf_path = os.path.join(TMP_OUTPUT_ROOT.format(crf), chunk_folder)
@@ -397,17 +397,17 @@ class JobManager:
             chunk_crf_path = os.path.join(TMP_OUTPUT_ROOT.format(crf), chunk_folder)
             final_output_path = FINAL_OUTPUT_ROOT.format(crf)
             if os.path.exists(chunk_crf_path):
-                move_with_progress(chunk_crf_path, final_output_path, False, True)
+                move_with_progress(chunk_crf_path, final_output_path, event_queue, False, True)
             remove_empty_dirs_in_path(chunk_crf_path, [os.path.dirname(os.path.dirname(TMP_OUTPUT_ROOT))])
 
         for rel_file in common_files:
             src_file = os.path.join(IN_PROGRESS, rel_file)
             dst_file = os.path.join(DONE_DIR, rel_file)
             if os.path.exists(src_file):
-                move_with_progress(src_file, dst_file)
+                move_with_progress(src_file, dst_file, event_queue)
 
         # Move the remaining files, if any
-        move_done_if_all_crf_outputs_exist()
+        move_done_if_all_crf_outputs_exist(event_queue)
 
     def _increment_jobs(self):
         with self.active_jobs.get_lock():

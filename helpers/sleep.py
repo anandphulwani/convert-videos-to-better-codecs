@@ -1,8 +1,7 @@
 import time
-from tqdm_manager import get_event_queue, get_random_value_for_id, BAR_TYPE
+from tqdm_manager import get_random_value_for_id, BAR_TYPE
 
-def sleep(sleep_time):
-    event_queue=get_event_queue()
+def sleep(sleep_time, event_queue):
     bar_id = get_random_value_for_id()
     event_queue.put({
         "op": "create",

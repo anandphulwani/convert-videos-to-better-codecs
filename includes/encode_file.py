@@ -10,7 +10,7 @@ from helpers.format_elapsed import format_elapsed
 from helpers.remove_topmost_dir import remove_topmost_dir
 from config import TMP_OUTPUT_ROOT, FINAL_OUTPUT_ROOT, TMP_PROCESSING
 from helpers.logging_utils import log
-from tqdm_manager import get_event_queue, BAR_TYPE
+from tqdm_manager import BAR_TYPE
 
 def encode_file(
     src_file,
@@ -18,12 +18,12 @@ def encode_file(
     crf,
     slot_idx,
     bytes_encoded,
+    event_queue,
     process_registry=None,
     chunk_progress=None,
     chunk_key=None,
-    pause_event=None,
+    pause_event=None
 ):
-    event_queue=get_event_queue()
     tmp_processing_dir = TMP_PROCESSING.format(crf)
     tmp_output_dir = TMP_OUTPUT_ROOT.format(crf)
     final_output_dir = FINAL_OUTPUT_ROOT.format(crf)

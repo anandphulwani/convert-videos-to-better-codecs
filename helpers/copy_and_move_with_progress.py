@@ -4,7 +4,7 @@ from multiprocessing import RLock
 
 from helpers.remove_path import remove_path
 from helpers.remove_empty_dir_upwards import remove_empty_dirs_upwards
-from tqdm_manager import get_event_queue, get_random_value_for_id, BAR_TYPE
+from tqdm_manager import get_random_value_for_id, BAR_TYPE
 
 _progress_lock = RLock()
 
@@ -35,7 +35,7 @@ def _copy_file(src_file, dst_file, bar_id, event_queue, copied_bytes_holder):
             })
     shutil.copystat(src_file, dst_file)
 
-def copy_with_progress(src, dst, desc="Copying"):
+def copy_with_progress(src, dst, event_queue, desc="Copying"):
     """
     Copy a file or directory from src to dst with progress reporting.
 
@@ -44,7 +44,6 @@ def copy_with_progress(src, dst, desc="Copying"):
     with _progress_lock:
         total_size = _calculate_total_size(src)
         copied_bytes_holder = [0]
-        event_queue=get_event_queue()
         bar_id = get_random_value_for_id()
         is_copying_anything = False
 
@@ -87,7 +86,7 @@ def copy_with_progress(src, dst, desc="Copying"):
         if is_copying_anything:
             event_queue.put({"op": "finish", "bar_id": bar_id})
 
-def move_with_progress(src, dst, remove_empty_source=False, move_contents_not_dir_itself=False, desc="Moving"):
+def move_with_progress(src, dst, event_queue, remove_empty_source=False, move_contents_not_dir_itself=False, desc="Moving"):
     """
     Move a file or directory from src to dst with progress reporting.
 
@@ -108,11 +107,11 @@ def move_with_progress(src, dst, remove_empty_source=False, move_contents_not_di
                 item_src = os.path.join(src, item)
                 item_dst = os.path.join(dst, item)
 
-                copy_with_progress(item_src, item_dst, desc=f"{desc}: {item}")
+                copy_with_progress(item_src, item_dst, event_queue, desc=f"{desc}: {item}")
                 remove_path(item_src)
         else:
             # Move the entire src (file or directory) into dst
-            copy_with_progress(src, dst, desc)
+            copy_with_progress(src, dst, event_queue, desc)
             remove_path(src)
 
         # Optionally remove any empty directories left behind

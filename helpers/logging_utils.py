@@ -6,7 +6,6 @@ import multiprocessing as mp
 from tqdm import tqdm
 from queue import Empty
 from dataclasses import dataclass
-from tqdm_manager import get_tqdm_manager
 
 from config import args
 
@@ -27,7 +26,6 @@ else:
         ctx = mp.get_context("spawn")
 
 LOG_QUEUE = ctx.Queue()
-tqdm_manager = get_tqdm_manager()
 
 # --- Log Message Structure ---
 @dataclass
@@ -41,7 +39,7 @@ class ErrorWarningFilter(logging.Filter):
         return record.levelno >= logging.WARNING
 
 # --- Setup Logging ---
-def setup_logging():
+def setup_logging(event_queue):
 
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     log_files_shared_state.LOG_FILE = f'./av1_job_{timestamp}.log'
@@ -67,7 +65,7 @@ def setup_logging():
     logging.getLogger().handlers = [file_handler, error_handler]
 
     # Start log consumer thread
-    threading.Thread(target=_log_consumer, daemon=True).start()
+    threading.Thread(target=_log_consumer, args=(event_queue,), daemon=True).start()
 
 # --- Logging Function ---
 def log(msg, level="info"):
@@ -80,19 +78,19 @@ def log(msg, level="info"):
         pass  # avoid crashing in case of failure
 
 # --- Log Consumer (Main Process) ---
-def _log_consumer():
+def _log_consumer(event_queue):
     while True:
         try:
             record = LOG_QUEUE.get(timeout=0.05)
             if record is None:
                 break  # graceful shutdown
-            _emit_log(record)
+            _emit_log(record, event_queue)
         except Empty:
             continue
         except Exception:
             pass  # never crash consumer
 
-def _emit_log(record: LogMessage):
+def _emit_log(record: LogMessage, event_queue):
     """
     Emit log from the main process logger.
     """
@@ -111,8 +109,8 @@ def _emit_log(record: LogMessage):
     if log_level_num >= configured_level:
         clear_code = "\033[J"
         tqdm.write(f"[{record.level.upper()}] {record.message}{clear_code}")
-        tqdm_manager.change_state_of_bars(True)
-        tqdm_manager.change_state_of_bars(False)
+        event_queue.put({"op": "change_state_of_bars", "state": True})
+        event_queue.put({"op": "change_state_of_bars", "state": False})
 
     # Emit via logger
     logger_fn = {
