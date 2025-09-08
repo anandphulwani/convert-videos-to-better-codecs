@@ -25,7 +25,8 @@ else:
     except ValueError:
         ctx = mp.get_context("spawn")
 
-LOG_QUEUE = ctx.Queue()
+LOG_QUEUE = None
+log_thread = None
 
 # --- Log Message Structure ---
 @dataclass
@@ -38,34 +39,51 @@ class ErrorWarningFilter(logging.Filter):
     def filter(self, record):
         return record.levelno >= logging.WARNING
 
-# --- Setup Logging ---
-def setup_logging(event_queue):
-
+# --- Internal Utility Functions ---
+def _generate_log_filenames():
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_files_shared_state.LOG_FILE = f'./av1_job_{timestamp}.log'
-    log_files_shared_state.ERROR_LOG_FILE = f'./errors_av1_job_{timestamp}.log'
+    log_file = f'./av1_job_{timestamp}.log'
+    error_log_file = f'./errors_av1_job_{timestamp}.log'
+    return log_file, error_log_file
 
-    # Clear any existing handlers
-    for handler in logging.root.handlers[:]:
-        logging.root.removeHandler(handler)
-
-    # File handler (debug/info)
-    file_handler = logging.FileHandler(log_files_shared_state.LOG_FILE)
+def _create_logger_handlers(log_file, error_log_file):
+    file_handler = logging.FileHandler(log_file)
     file_handler.setLevel(logging.DEBUG if args.debug else logging.INFO)
     file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
 
-    # Error log handler (warnings and above)
-    error_handler = logging.FileHandler(log_files_shared_state.ERROR_LOG_FILE)
+    error_handler = logging.FileHandler(error_log_file)
     error_handler.setLevel(logging.WARNING)
     error_handler.addFilter(ErrorWarningFilter())
     error_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
 
-    # Register handlers
-    logging.getLogger().setLevel(logging.DEBUG if args.debug else logging.INFO)
-    logging.getLogger().handlers = [file_handler, error_handler]
+    return [file_handler, error_handler]
 
-    # Start log consumer thread
-    threading.Thread(target=_log_consumer, args=(event_queue,), daemon=True).start()
+def _reset_logger_handlers(handlers):
+    logger = logging.getLogger()
+    for handler in logger.handlers[:]:
+        handler.close()
+        logger.removeHandler(handler)
+
+    for handler in handlers:
+        logger.addHandler(handler)
+
+# --- Setup Logging ---
+def setup_logging(event_queue):
+    global LOG_QUEUE, log_thread
+    LOG_QUEUE = ctx.Queue()
+
+    log_file, error_log_file = _generate_log_filenames()
+    log_files_shared_state.LOG_FILE = log_file
+    log_files_shared_state.ERROR_LOG_FILE = error_log_file
+
+    handlers = _create_logger_handlers(log_file, error_log_file)
+
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG if args.debug else logging.INFO)
+    _reset_logger_handlers(handlers)
+
+    log_thread = threading.Thread(target=_log_consumer, args=(event_queue,), daemon=True)
+    log_thread.start()
 
 # --- Logging Function ---
 def log(msg, level="info"):
