@@ -161,6 +161,8 @@ def main():
         cleanup_working_folders(event_queue)
         move_logs_to_central_output(event_queue)
         stop_logging()
+        event_queue.close()
+        event_queue.join_thread()
         print("Exiting main program.")
 
 if __name__ == '__main__':

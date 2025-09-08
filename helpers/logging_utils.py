@@ -159,5 +159,8 @@ def stop_logging():
     """
     try:
         LOG_QUEUE.put_nowait(None)
+        log_thread.join(timeout=5)  # optionally add timeout
+        LOG_QUEUE.close()
+        LOG_QUEUE.join_thread()
     except Exception:
         pass

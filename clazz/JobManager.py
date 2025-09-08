@@ -475,6 +475,11 @@ class JobManager:
         self._gracefully_stop_workers()
         self._join_light_threads()
         try:
+            self.task_queue.close()
+            self.task_queue.join_thread()
+        except Exception as e:
+            log(f"Failed to close task_queue: {e}", level="warning")
+        try:
             self.manager.shutdown()
         except Exception:
             pass
