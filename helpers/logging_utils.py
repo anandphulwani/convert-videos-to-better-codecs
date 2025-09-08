@@ -113,16 +113,16 @@ def _emit_log(record: LogMessage, event_queue):
         event_queue.put({"op": "change_state_of_bars", "state": False})
 
     if logging.getLogger().handlers:
-    # Emit via logger
-    logger_fn = {
-        'debug': logging.debug,
-        'info': logging.info,
-        'warning': logging.warning,
-        'error': logging.error,
-        'critical': logging.critical
-    }.get(record.level, logging.info)
+        # Emit via logger
+        logger_fn = {
+            'debug': logging.debug,
+            'info': logging.info,
+            'warning': logging.warning,
+            'error': logging.error,
+            'critical': logging.critical
+        }.get(record.level, logging.info)
 
-    logger_fn(record.message)
+        logger_fn(record.message)
 
 # --- Shutdown Cleanly ---
 def stop_logging():
