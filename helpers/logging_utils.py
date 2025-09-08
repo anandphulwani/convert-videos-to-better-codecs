@@ -112,6 +112,7 @@ def _emit_log(record: LogMessage, event_queue):
         event_queue.put({"op": "change_state_of_bars", "state": True})
         event_queue.put({"op": "change_state_of_bars", "state": False})
 
+    if logging.getLogger().handlers:
     # Emit via logger
     logger_fn = {
         'debug': logging.debug,
