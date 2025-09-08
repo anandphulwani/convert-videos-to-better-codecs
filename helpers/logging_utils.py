@@ -85,6 +85,16 @@ def setup_logging(event_queue):
     log_thread = threading.Thread(target=_log_consumer, args=(event_queue,), daemon=True)
     log_thread.start()
 
+def redirect_logs_to_new_file():
+    new_log_file, new_error_log_file = _generate_log_filenames()
+    handlers = _create_logger_handlers(new_log_file, new_error_log_file)
+
+    _reset_logger_handlers(handlers)
+
+    log_files_shared_state.LOG_FILE = new_log_file
+    log_files_shared_state.ERROR_LOG_FILE = new_error_log_file
+
+
 # --- Logging Function ---
 def log(msg, level="info"):
     """
