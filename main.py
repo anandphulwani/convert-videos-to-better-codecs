@@ -156,8 +156,8 @@ def main():
         log("Interrupted.", level="warning")
     finally:
         job_manager.shutdown()
-        tqdm_manager.stop_event_loop()
         event_queue.put({"op": "pause_tqdm_manager"})
+        tqdm_manager.stop_event_loop()
         cleanup_working_folders(event_queue)
         move_logs_to_central_output(event_queue)
         stop_logging()
