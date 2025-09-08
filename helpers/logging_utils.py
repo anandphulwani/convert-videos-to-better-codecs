@@ -162,5 +162,6 @@ def stop_logging():
         log_thread.join(timeout=5)  # optionally add timeout
         LOG_QUEUE.close()
         LOG_QUEUE.join_thread()
+        logging.shutdown()
     except Exception:
         pass
