@@ -157,12 +157,12 @@ def main():
     finally:
         job_manager.shutdown()
         event_queue.put({"op": "pause_tqdm_manager"})
-        tqdm_manager.stop_event_loop()
         cleanup_working_folders(event_queue)
         move_logs_to_central_output(event_queue)
-        stop_logging()
         event_queue.close()
         event_queue.join_thread()
+        tqdm_manager.stop_event_loop()
+        stop_logging()
         print("Exiting main program.")
 
 if __name__ == '__main__':
