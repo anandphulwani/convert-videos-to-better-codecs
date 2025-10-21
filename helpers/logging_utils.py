@@ -90,13 +90,13 @@ def setup_logging(event_queue, tqdm_manager):
 def redirect_logs_to_new_file():
     global LOG_HANDLER_LOCK
     with LOG_HANDLER_LOCK:
-    new_log_file, new_error_log_file = _generate_log_filenames()
-    handlers = _create_logger_handlers(new_log_file, new_error_log_file)
+        new_log_file, new_error_log_file = _generate_log_filenames()
+        handlers = _create_logger_handlers(new_log_file, new_error_log_file)
 
-    _reset_logger_handlers(handlers)
+        _reset_logger_handlers(handlers)
 
-    log_files_shared_state.LOG_FILE = new_log_file
-    log_files_shared_state.ERROR_LOG_FILE = new_error_log_file
+        log_files_shared_state.LOG_FILE = new_log_file
+        log_files_shared_state.ERROR_LOG_FILE = new_error_log_file
 
 
 # --- Logging Function ---
