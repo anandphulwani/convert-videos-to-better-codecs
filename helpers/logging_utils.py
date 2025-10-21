@@ -129,6 +129,14 @@ def _log_consumer_process(event_queue, tqdm_manager, log_queue, lock, debug):
             continue
         except Exception:
             pass  # never crash consumer
+    # Cleanup
+    for h in logger.handlers[:]:
+        try:
+            h.flush()
+        except Exception:
+            pass
+        h.close()
+        logger.removeHandler(h)
 
 def _emit_log(record: LogMessage, event_queue, tqdm_manager, lock, debug):
     """
