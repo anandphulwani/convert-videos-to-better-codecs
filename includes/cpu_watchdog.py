@@ -5,7 +5,7 @@ import math
 from collections import deque
 from helpers.logging_utils import log
 from includes.state import pause_flag
-from config import CPU_PERCENT_BENCHMARK_TO_PAUSE
+from config import PROCESSES_NICE_RANGE_TO_COLLECT, CPU_PERCENT_BENCHMARK_TO_PAUSE
 
 cpu_usage_history = deque(maxlen=10)
 
@@ -15,7 +15,7 @@ def get_filtered_cpu_usage():
         try:
             nice = proc.info['nice']
             cpu = proc.info['cpu_percent']
-            if nice < 10:
+            if nice >= PROCESSES_NICE_RANGE_TO_COLLECT[0] and nice <= PROCESSES_NICE_RANGE_TO_COLLECT[1]:
                 total_cpu += cpu
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
