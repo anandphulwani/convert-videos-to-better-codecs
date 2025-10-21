@@ -51,4 +51,5 @@ ALL_ROOTS += [TMP_OUTPUT_ROOT.format(crf) for crf in CRF_VALUES]
 
 # Nice values are valid from -20 to +20, 0 being default, where -20 is highest and +20 is lowest priority.
 PROCESSES_NICE_RANGE_TO_COLLECT = [-20, +10]
+CPU_VALUES_TO_COLLECT_IN_ONE_RUN = 10
 CPU_PERCENT_BENCHMARK_TO_PAUSE = 10

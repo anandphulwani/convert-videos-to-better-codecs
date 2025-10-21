@@ -5,7 +5,8 @@ import math
 from collections import deque
 from helpers.logging_utils import log
 from includes.state import pause_flag
-from config import PROCESSES_NICE_RANGE_TO_COLLECT, CPU_PERCENT_BENCHMARK_TO_PAUSE
+from config import (PROCESSES_NICE_RANGE_TO_COLLECT, CPU_PERCENT_BENCHMARK_TO_PAUSE, 
+                    CPU_VALUES_TO_COLLECT_IN_ONE_RUN)
 
 cpu_usage_history = deque(maxlen=10)
 
@@ -22,27 +23,28 @@ def get_filtered_cpu_usage():
     logical_cpus = psutil.cpu_count()
     return total_cpu / logical_cpus
 
-def collect_cpu_samples(num_samples=10):
+def collect_cpu_samples():
     for proc in psutil.process_iter():
         proc.cpu_percent(interval=None)
     time.sleep(1)
 
     samples = []
-    for _ in range(num_samples):
+    for _ in range(CPU_VALUES_TO_COLLECT_IN_ONE_RUN):
         usage = get_filtered_cpu_usage()
         samples.append(usage)
 
         sleep_duration = random.uniform(0.01, 1.5) # Random sleep to get realistic data
         time.sleep(sleep_duration)
 
-    return samples
+    avg_usage_single_run = sum(samples) / len(samples)
+    return avg_usage_single_run
 
 def cpu_watchdog(stop_event):
     while not stop_event.is_set():
         log("[Monitor] Starting new sampling round...", level="debug")
         
-        samples = collect_cpu_samples()
-        cpu_usage_history.extend(samples)
+        usage = collect_cpu_samples()
+        cpu_usage_history.append(usage)
 
         avg_usage = sum(cpu_usage_history) / len(cpu_usage_history)
         log(f"[Monitor] Avg CPU usage (last {len(cpu_usage_history)}): {avg_usage:.2f}%", level="debug")
