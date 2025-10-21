@@ -74,16 +74,6 @@ def setup_logging(event_queue, tqdm_manager):
     global LOG_QUEUE, log_thread, LOG_HANDLER_LOCK
     LOG_QUEUE = ctx.Queue()
 
-    log_file, error_log_file = _generate_log_filenames()
-    log_files_shared_state.LOG_FILE = log_file
-    log_files_shared_state.ERROR_LOG_FILE = error_log_file
-
-    handlers = _create_logger_handlers(log_file, error_log_file)
-
-    logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG if args.debug else logging.INFO)
-    _reset_logger_handlers(handlers)
-
     log_thread = threading.Thread(target=_log_consumer, args=(event_queue,tqdm_manager, LOG_QUEUE, LOG_HANDLER_LOCK, args.debug), daemon=True)
     log_thread.start()
 
@@ -111,6 +101,16 @@ def log(msg, level="info"):
 
 # --- Log Consumer (Main Process) ---
 def _log_consumer(event_queue, tqdm_manager, log_queue, lock, debug):
+    log_file, error_log_file = _generate_log_filenames()
+    log_files_shared_state.LOG_FILE = log_file
+    log_files_shared_state.ERROR_LOG_FILE = error_log_file
+
+    handlers = _create_logger_handlers(log_file, error_log_file)
+
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
+    _reset_logger_handlers(handlers)
+
     while True:
         try:
             record = log_queue.get(timeout=0.01)
