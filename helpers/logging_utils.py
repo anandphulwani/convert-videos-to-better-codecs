@@ -14,6 +14,10 @@ log_files_shared_state = manager.Namespace()
 log_files_shared_state.LOG_FILE = None
 log_files_shared_state.ERROR_LOG_FILE = None
 
+# Lock for safe handler changes (not strictly required in process model,
+# but still useful if you want to support dynamic redirection safely)
+LOG_HANDLER_LOCK = mp.Lock()
+
 # Global logging queue
 if platform.system() == "Windows":
     ctx = mp.get_context("spawn")
@@ -67,7 +71,7 @@ def _reset_logger_handlers(handlers):
 
 # --- Setup Logging ---
 def setup_logging(event_queue, tqdm_manager):
-    global LOG_QUEUE, log_thread
+    global LOG_QUEUE, log_thread, LOG_HANDLER_LOCK
     LOG_QUEUE = ctx.Queue()
 
     log_file, error_log_file = _generate_log_filenames()
@@ -84,6 +88,8 @@ def setup_logging(event_queue, tqdm_manager):
     log_thread.start()
 
 def redirect_logs_to_new_file():
+    global LOG_HANDLER_LOCK
+    with LOG_HANDLER_LOCK:
     new_log_file, new_error_log_file = _generate_log_filenames()
     handlers = _create_logger_handlers(new_log_file, new_error_log_file)
 
