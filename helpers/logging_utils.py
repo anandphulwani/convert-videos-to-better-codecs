@@ -29,7 +29,7 @@ else:
         ctx = mp.get_context("spawn")
 
 LOG_QUEUE = None
-log_thread = None
+log_process = None
 
 # --- Log Message Structure ---
 @dataclass
@@ -71,11 +71,15 @@ def _reset_logger_handlers(handlers):
 
 # --- Setup Logging ---
 def setup_logging(event_queue, tqdm_manager):
-    global LOG_QUEUE, log_thread, LOG_HANDLER_LOCK
+    global LOG_QUEUE, log_process, LOG_HANDLER_LOCK
     LOG_QUEUE = ctx.Queue()
 
-    log_thread = threading.Thread(target=_log_consumer, args=(event_queue,tqdm_manager, LOG_QUEUE, LOG_HANDLER_LOCK, args.debug), daemon=True)
-    log_thread.start()
+    log_process = mp.Process(
+        target=_log_consumer_process,
+        args=(event_queue, tqdm_manager, LOG_QUEUE, LOG_HANDLER_LOCK, args.debug),
+        daemon=True
+    )
+    log_process.start()
 
 def redirect_logs_to_new_file():
     global LOG_HANDLER_LOCK
@@ -100,7 +104,7 @@ def log(msg, level="info"):
         pass  # avoid crashing in case of failure
 
 # --- Log Consumer (Main Process) ---
-def _log_consumer(event_queue, tqdm_manager, log_queue, lock, debug):
+def _log_consumer_process(event_queue, tqdm_manager, log_queue, lock, debug):
     log_file, error_log_file = _generate_log_filenames()
     log_files_shared_state.LOG_FILE = log_file
     log_files_shared_state.ERROR_LOG_FILE = error_log_file
@@ -159,9 +163,10 @@ def stop_logging():
     """
     Call from the main process before exit to stop log consumer cleanly.
     """
+    global log_process
     try:
         LOG_QUEUE.put_nowait(None)
-        log_thread.join(timeout=5)  # optionally add timeout
+        log_process.join(timeout=5)  # optionally add timeout
         LOG_QUEUE.close()
         LOG_QUEUE.join_thread()
         logging.shutdown()
