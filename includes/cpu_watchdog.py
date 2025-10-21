@@ -6,9 +6,9 @@ from collections import deque
 from helpers.logging_utils import log
 from includes.state import pause_flag
 from config import (PROCESSES_NICE_RANGE_TO_COLLECT, CPU_PERCENT_BENCHMARK_TO_PAUSE, 
-                    CPU_VALUES_TO_COLLECT_IN_ONE_RUN)
+                    CPU_VALUES_TO_COLLECT_IN_ONE_RUN, CPU_RUNS_TO_BENCHMARK_USAGE)
 
-cpu_usage_history = deque(maxlen=10)
+cpu_usage_history = deque(maxlen=CPU_RUNS_TO_BENCHMARK_USAGE)
 
 def get_filtered_cpu_usage():
     total_cpu = 0.0
