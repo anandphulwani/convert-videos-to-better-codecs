@@ -151,7 +151,7 @@ def _emit_log(record: LogMessage, event_queue, tqdm_manager, lock, debug):
     }
 
     log_level_num = level_map.get(record.level, logging.INFO)
-    configured_level = logging.DEBUG if args.debug else logging.INFO
+    configured_level = logging.DEBUG if debug else logging.INFO
 
     # Console output via tqdm if appropriate
     if log_level_num >= configured_level:
