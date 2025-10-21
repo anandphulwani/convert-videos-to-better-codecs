@@ -63,6 +63,10 @@ def _create_logger_handlers(log_file, error_log_file):
 def _reset_logger_handlers(handlers):
     logger = logging.getLogger()
     for handler in logger.handlers[:]:
+        try:
+            handler.flush()
+        except Exception:
+            pass
         handler.close()
         logger.removeHandler(handler)
 
