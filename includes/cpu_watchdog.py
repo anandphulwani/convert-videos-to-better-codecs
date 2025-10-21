@@ -22,8 +22,6 @@ def get_filtered_cpu_usage():
     logical_cpus = psutil.cpu_count()
     return total_cpu / logical_cpus
 
-cpu_usage_history = deque(maxlen=10)  # Store the last 10 usage values
-
 def collect_cpu_samples(num_samples=10):
     for proc in psutil.process_iter():
         proc.cpu_percent(interval=None)
