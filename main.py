@@ -98,7 +98,7 @@ def main():
     tqdm_manager = TqdmManager(base_position=MAX_WORKERS)
     tqdm_manager.attach_event_queue(event_queue)
 
-    setup_logging(event_queue)
+    setup_logging(event_queue, tqdm_manager)
     cleanup_working_folders(event_queue)
     log(f"Starting AV1 job processor on {MACHINE_ID}")
 
@@ -107,7 +107,7 @@ def main():
     last_progress = {}
     pause_flag.clear()
     
-    job_manager = JobManager(event_queue=event_queue)
+    job_manager = JobManager(event_queue=event_queue, tqdm_manager=tqdm_manager)
     job_manager.start()
     
     try:

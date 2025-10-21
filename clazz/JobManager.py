@@ -37,7 +37,7 @@ class EncodingTask:
     chunk: str
 
 class JobManager:
-    def __init__(self, event_queue):
+    def __init__(self, event_queue, tqdm_manager):
         self.preload_done = threading.Event()
         self.max_workers = MAX_WORKERS
         self.crf_values = CRF_VALUES
@@ -45,6 +45,7 @@ class JobManager:
         self.tmp_input_dir = TMP_INPUT
         self.in_progress_dir = IN_PROGRESS
         self.event_queue = event_queue
+        self.tqdm_manager = tqdm_manager
 
         # IMPORTANT: JoinableQueue for proper completion semantics
         self.task_queue = JoinableQueue()

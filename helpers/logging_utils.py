@@ -66,7 +66,7 @@ def _reset_logger_handlers(handlers):
         logger.addHandler(handler)
 
 # --- Setup Logging ---
-def setup_logging(event_queue):
+def setup_logging(event_queue, tqdm_manager):
     global LOG_QUEUE, log_thread
     LOG_QUEUE = ctx.Queue()
 
@@ -80,7 +80,7 @@ def setup_logging(event_queue):
     logger.setLevel(logging.DEBUG if args.debug else logging.INFO)
     _reset_logger_handlers(handlers)
 
-    log_thread = threading.Thread(target=_log_consumer, args=(event_queue,), daemon=True)
+    log_thread = threading.Thread(target=_log_consumer, args=(event_queue,tqdm_manager,), daemon=True)
     log_thread.start()
 
 def redirect_logs_to_new_file():
@@ -104,19 +104,19 @@ def log(msg, level="info"):
         pass  # avoid crashing in case of failure
 
 # --- Log Consumer (Main Process) ---
-def _log_consumer(event_queue):
+def _log_consumer(event_queue, tqdm_manager):
     while True:
         try:
             record = LOG_QUEUE.get(timeout=0.05)
             if record is None:
                 break  # graceful shutdown
-            _emit_log(record, event_queue)
+            _emit_log(record, event_queue, tqdm_manager)
         except Empty:
             continue
         except Exception:
             pass  # never crash consumer
 
-def _emit_log(record: LogMessage, event_queue):
+def _emit_log(record: LogMessage, event_queue, tqdm_manager):
     """
     Emit log from the main process logger.
     """
