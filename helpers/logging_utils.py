@@ -1,7 +1,6 @@
 import logging
 import datetime
 import platform
-import threading
 import multiprocessing as mp
 from tqdm import tqdm
 from queue import Empty
@@ -50,7 +49,6 @@ def _create_logger_handlers(log_file, error_log_file):
     file_handler = logging.FileHandler(log_file)
     file_handler.setLevel(logging.DEBUG if args.debug else logging.INFO)
     file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
-
     error_handler = logging.FileHandler(error_log_file)
     error_handler.setLevel(logging.WARNING)
     error_handler.addFilter(ErrorWarningFilter())

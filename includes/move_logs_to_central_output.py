@@ -1,6 +1,4 @@
 import os
-import logging
-
 from helpers.copy_and_move_with_progress import move_with_progress
 from config import LOGS_DIR
 from helpers.logging_utils import redirect_logs_to_new_file, log_files_shared_state
