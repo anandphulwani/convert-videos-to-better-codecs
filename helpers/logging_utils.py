@@ -143,35 +143,35 @@ def _emit_log(record: LogMessage, event_queue, tqdm_manager, lock, debug):
     Emit log from the main process logger.
     """
     with lock:
-    level_map = {
-        'debug': logging.DEBUG,
-        'info': logging.INFO,
-        'warning': logging.WARNING,
-        'error': logging.ERROR,
-        'critical': logging.CRITICAL
-    }
+        level_map = {
+            'debug': logging.DEBUG,
+            'info': logging.INFO,
+            'warning': logging.WARNING,
+            'error': logging.ERROR,
+            'critical': logging.CRITICAL
+        }
 
-    log_level_num = level_map.get(record.level, logging.INFO)
-    configured_level = logging.DEBUG if debug else logging.INFO
+        log_level_num = level_map.get(record.level, logging.INFO)
+        configured_level = logging.DEBUG if debug else logging.INFO
 
-    # Console output via tqdm if appropriate
-    if log_level_num >= configured_level:
-        clear_code = "\033[J"
-        event_queue.put({
-                    "op": "print_statement",
-                    "message": f"[{record.level.upper()}] {record.message}{clear_code}"})
+        # Console output via tqdm if appropriate
+        if log_level_num >= configured_level:
+            clear_code = "\033[J"
+            event_queue.put({
+                        "op": "print_statement",
+                        "message": f"[{record.level.upper()}] {record.message}{clear_code}"})
 
-    if logging.getLogger().handlers:
-        # Emit via logger
-        logger_fn = {
-            'debug': logging.debug,
-            'info': logging.info,
-            'warning': logging.warning,
-            'error': logging.error,
-            'critical': logging.critical
-        }.get(record.level, logging.info)
+        if logging.getLogger().handlers:
+            # Emit via logger
+            logger_fn = {
+                'debug': logging.debug,
+                'info': logging.info,
+                'warning': logging.warning,
+                'error': logging.error,
+                'critical': logging.critical
+            }.get(record.level, logging.info)
 
-        logger_fn(record.message)
+            logger_fn(record.message)
 
 # --- Shutdown Cleanly ---
 def stop_logging():
