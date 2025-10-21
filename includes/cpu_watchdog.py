@@ -6,7 +6,8 @@ from collections import deque
 from helpers.logging_utils import log
 from includes.state import pause_flag
 from config import (PROCESSES_NICE_RANGE_TO_COLLECT, CPU_PERCENT_BENCHMARK_TO_PAUSE, 
-                    CPU_VALUES_TO_COLLECT_IN_ONE_RUN, CPU_RUNS_TO_BENCHMARK_USAGE)
+                    CPU_VALUES_TO_COLLECT_IN_ONE_RUN, CPU_RUNS_TO_BENCHMARK_USAGE, 
+                    CPU_MONITOR_INTERVAL_SECONDS)
 
 cpu_usage_history = deque(maxlen=CPU_RUNS_TO_BENCHMARK_USAGE)
 
@@ -58,4 +59,4 @@ def cpu_watchdog(stop_event):
                 log("CPU usage normalized. Resuming encoding...", level="debug")
                 pause_flag.clear()
 
-        time.sleep(10 * 60)  # Sleep for 10 minutes
+        time.sleep(CPU_MONITOR_INTERVAL_SECONDS)
