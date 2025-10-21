@@ -135,8 +135,6 @@ def _emit_log(record: LogMessage, event_queue, tqdm_manager):
     if log_level_num >= configured_level:
         clear_code = "\033[J"
         tqdm.write(f"[{record.level.upper()}] {record.message}{clear_code}")
-        event_queue.put({"op": "change_state_of_bars", "state": True})
-        event_queue.put({"op": "change_state_of_bars", "state": False})
 
     if logging.getLogger().handlers:
         # Emit via logger

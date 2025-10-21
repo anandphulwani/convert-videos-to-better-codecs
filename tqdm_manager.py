@@ -51,6 +51,11 @@ class TqdmManager:
         self.change_state_of_bars(True)
         self.change_state_of_bars(False)
 
+    def print_statement(self, message):
+        self.change_state_of_bars(True)
+        tqdm.write(message)
+        self.change_state_of_bars(False)        
+
     def remove_bar_from_gui(self, bar):
         with self.lock:
             bar.disable = True
@@ -431,8 +436,8 @@ class TqdmManager:
                     self.pause_tqdm_manager()
                 elif op == "resume_tqdm_manager":
                     self.resume_tqdm_manager()
-                elif op == "change_state_of_bars":
-                    self.change_state_of_bars(msg["status"])
+                elif op == "print_statement":
+                    self.print_statement(msg["message"])
                 elif op == "close_all":
                     # Optional: close all file bars (e.g., on shutdown)
                     for bar_list in self.bars.values():
