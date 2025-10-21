@@ -32,7 +32,7 @@ def collect_cpu_samples(num_samples=10):
         usage = get_filtered_cpu_usage()
         samples.append(usage)
 
-        sleep_duration = random.uniform(0.01, 1.5)
+        sleep_duration = random.uniform(0.01, 1.5) # Random sleep to get realistic data
         time.sleep(sleep_duration)
 
     return samples
