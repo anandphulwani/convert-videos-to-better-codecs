@@ -18,16 +18,6 @@ log_files_shared_state.ERROR_LOG_FILE = None
 # but still useful if you want to support dynamic redirection safely)
 LOG_HANDLER_LOCK = mp.Lock()
 
-# Global logging queue
-if platform.system() == "Windows":
-    ctx = mp.get_context("spawn")
-else:
-    # Use 'fork' where available (typically Unix-based systems), else fallback to 'spawn'
-    try:
-        ctx = mp.get_context("fork")
-    except ValueError:
-        ctx = mp.get_context("spawn")
-
 LOG_QUEUE = None
 log_process = None
 
@@ -76,7 +66,7 @@ def _reset_logger_handlers(handlers):
 # --- Setup Logging ---
 def setup_logging(event_queue, tqdm_manager):
     global LOG_QUEUE, log_process, LOG_HANDLER_LOCK
-    LOG_QUEUE = ctx.Queue()
+    LOG_QUEUE = mp.Queue()
 
     log_process = mp.Process(
         target=_log_consumer_process,
