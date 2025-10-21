@@ -142,6 +142,7 @@ def _emit_log(record: LogMessage, event_queue, tqdm_manager, lock, debug):
     """
     Emit log from the main process logger.
     """
+    with lock:
     level_map = {
         'debug': logging.DEBUG,
         'info': logging.INFO,
