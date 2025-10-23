@@ -419,6 +419,9 @@ class TqdmManager:
                 continue
             try:
                 msg = self._event_queue.get(timeout=0.2)
+            except (EOFError, OSError):
+                time.sleep(1)
+                continue
             except Empty:
                 continue
             if msg is None:
