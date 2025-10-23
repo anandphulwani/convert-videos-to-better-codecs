@@ -108,7 +108,6 @@ class JobManager:
                     self._preload_existing_input_chunks()
                     self._start_preloader()
                     self.pause_event.clear()
-                    setup_logging(event_queue)
             time.sleep(1)
 
     def _start_preloader(self):
