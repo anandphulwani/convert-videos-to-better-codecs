@@ -414,9 +414,6 @@ class TqdmManager:
 
     def _event_loop(self):
         while not self._stop_event.is_set():
-            if self._pause_event.is_set():
-                time.sleep(1)
-                continue
             try:
                 msg = self._event_queue.get(timeout=0.2)
             except (EOFError, OSError):
