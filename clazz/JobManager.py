@@ -97,7 +97,7 @@ class JobManager:
                     self.pause_event.set()
                     event_queue.put({"op": "pause_tqdm_manager"})
                     self.pause()
-                    move_logs_to_central_output(event_queue)
+                    move_logs_to_central_output(event_queue, True)
                     clear_tmp_processing()
                     was_paused = True
             else:
