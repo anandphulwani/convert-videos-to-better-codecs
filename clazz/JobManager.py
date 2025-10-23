@@ -8,6 +8,7 @@ from queue import Empty
 from dataclasses import dataclass
 
 from config import ( 
+    args,
     IN_PROGRESS, DONE_DIR, FAILED_DIR, 
     TMP_INPUT, TMP_OUTPUT_ROOT, FINAL_OUTPUT_ROOT, CRF_VALUES,
     TMP_PROCESSING, TMP_FAILED_ROOT, TMP_SKIPPED_ROOT,
@@ -74,8 +75,8 @@ class JobManager:
         self._preload_existing_input_chunks()
         self._start_workers()
         self._start_preloader()
-        self._start_cpu_watchdog()
-        self._start_pause_monitor()
+        self._start_cpu_watchdog() if args.throttle else None
+        self._start_pause_monitor() if args.throttle else None
         # Small head-start for the preloader is fine but not required.
 
     def _start_cpu_watchdog(self):
