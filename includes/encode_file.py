@@ -88,7 +88,11 @@ def encode_file(
     last_progress = 0
     for line in process.stdout:
         if line.startswith('out_time_ms='):
-            out_ms = int(line.split('=', 1)[1].strip())
+            val = line.split('=', 1)[1].strip()
+            try:
+                out_ms = int(val)  # may be N/A early on
+            except ValueError:
+                continue  # skip this line until it's numeric
             percent = out_ms / duration
             current_progress = math.floor(file_size * percent)
             delta_bytes = current_progress - last_progress
