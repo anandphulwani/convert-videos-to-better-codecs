@@ -113,8 +113,9 @@ To start the encoding job processor:
 
 ```bash
 cd convert-videos-to-better-codecs
+cp config.py.template config.py # Copy the config template file and change values
 which python3 # Check the path of it and use it while calling main.py
-clear && nice -n 19 /usr/bin/python3 main.py
+clear && nice -n 19 /usr/bin/python3 main.py # Add `--debug` and `--throttle` as required
 ```
 
 Optional flags:
