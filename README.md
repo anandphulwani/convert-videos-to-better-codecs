@@ -101,7 +101,8 @@ git clone https://github.com/anandphulwani/convert-videos-to-better-codecs
 
 ```bash
 apt install ffmpeg
-apt install libx264-dev libx265-dev libsvtav1enc1 libopus0 libmp3lame0 -y
+apt install libx264-dev libx265-dev libopus0 libmp3lame0 -y
+apt install libsvtav1enc1 -y || apt install libsvtav1enc2 -y
 apt install python3-tqdm python3-psutil -y
 ```
 
