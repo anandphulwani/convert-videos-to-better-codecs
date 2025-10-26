@@ -22,7 +22,7 @@ def cleanup_working_folders(event_queue):
     remove_files_of_ext(TMP_INPUT, "done")
 
     # Remove empty directories with progress bar
-    all_main_dirs = [TO_ASSIGN, IN_PROGRESS, DONE_DIR, FAILED_DIR, LOGS_DIR, TMP_INPUT, 
+    all_main_dirs = [IN_PROGRESS, DONE_DIR, FAILED_DIR, LOGS_DIR, TMP_INPUT, 
                      os.path.dirname(TMP_PROCESSING), os.path.dirname(TMP_OUTPUT_ROOT),
                      os.path.dirname(TMP_FAILED_ROOT), os.path.dirname(TMP_SKIPPED_ROOT)]
     all_dirs = find_all_dirs(all_main_dirs)
