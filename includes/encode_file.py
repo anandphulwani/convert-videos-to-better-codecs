@@ -141,14 +141,14 @@ def encode_file(
             # Print partial stderr to console
             stderr_lines = stderr.strip().splitlines()
             snippet = stderr_lines[-10:]  # Show first 10 lines
-            print(f"\n{'=' * 29}  START  {'=' * 29}")
-            print(f"FFmpeg error for {rel_path} [CRF {crf}]")
-            print("-" * 60)
+            log(f"\n{'=' * 29}  START  {'=' * 29}", log_to=["console"])
+            log(f"FFmpeg error for {rel_path} [CRF {crf}]", log_to=["console"])
+            log("-" * 60, log_to=["console"])
             for line in snippet:
-                print(line)
+                log(line, log_to=["console"])
             if len(stderr_lines) > 10:
-                print("... (truncated)")
-            print(f"{'=' * 30}  END  {'=' * 30}\n")
+                log("... (truncated)", log_to=["console"])
+            log(f"{'=' * 30}  END  {'=' * 30}\n", log_to=["console"])
             
             if process_registry is not None:
                 process_registry.pop(os.getpid(), None)
