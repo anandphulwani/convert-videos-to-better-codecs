@@ -131,12 +131,12 @@ def encode_file(
 
     if process.returncode != 0 or not os.path.exists(tmp_processing_file):
         if pause_event is None or not pause_event.is_set():
-            log(f"{'=' * 29}  START  {'=' * 29}", level="error")
-            log(f"FFmpeg failed for {rel_path} [CRF {crf}]", level="error")
-            log(stdout, level="error")
-            log("-" * 60, level="error")
-            log(stderr, level="error")
-            log(f"{'=' * 30}  END  {'=' * 30}", level="error")
+            log(f"{'=' * 29}  START  {'=' * 29}", level="error", log_to=["file"])
+            log(f"FFmpeg failed for {rel_path} [CRF {crf}]", level="error", log_to=["file"])
+            log(stdout, level="error", log_to=["file"])
+            log("-" * 60, level="error", log_to=["file"])
+            log(stderr, level="error", log_to=["file"])
+            log(f"{'=' * 30}  END  {'=' * 30}", level="error", log_to=["file"])
 
             # Print partial stderr to console
             stderr_lines = stderr.strip().splitlines()
