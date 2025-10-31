@@ -2,6 +2,7 @@ import subprocess
 import os
 import platform
 import subprocess
+import threading
 import time
 import math
 
@@ -86,73 +87,117 @@ def encode_file(
         process_registry[os.getpid()] = process.pid
 
     last_progress = 0
-    for line in process.stdout:
-        if line.startswith('out_time_ms='):
-            val = line.split('=', 1)[1].strip()
-            try:
-                out_ms = int(val)  # may be N/A early on
-            except ValueError:
-                continue  # skip this line until it's numeric
-            percent = out_ms / duration
-            current_progress = math.floor(file_size * percent)
-            delta_bytes = current_progress - last_progress
-            if delta_bytes > 0:
-                bytes_encoded.value += delta_bytes
-                if chunk_progress is not None and chunk_key is not None:
-                    # per-chunk live byte progress
-                    chunk_progress[chunk_key].value += delta_bytes
+    error_while_decoding = False
+    stdout_output = []
+    stderr_output = []
+    lock = threading.Lock()  # to protect shared vars above
+
+    def stdout_reader(proc):
+        nonlocal last_progress
+        for line in proc.stdout:
+            line = line.strip()
+
+            with lock:
+                stdout_output.append(line)
+
+                # progress lines
+                if line.startswith('out_time_ms='):
+                    val = line.split('=', 1)[1].strip()
+                    try:
+                        out_ms = int(val)  # may be N/A early on
+                    except ValueError:
+                        continue  # skip this line until it's numeric
+
+                    percent = out_ms / duration
+                    current_progress = math.floor(file_size * percent)
+
+
+                    delta_bytes = current_progress - last_progress
+                    if delta_bytes > 0:
+                        bytes_encoded.value += delta_bytes
+                        if chunk_progress is not None and chunk_key is not None:
+                            chunk_progress[chunk_key].value += delta_bytes
+                            if event_queue is not None:
+                                event_queue.put({
+                                    "op": "update",
+                                    "bar_id": f"file_slot_{slot_idx:02}",
+                                    "current": current_progress
+                                })
+                        last_progress = current_progress
+
+                elif line.startswith('progress=end'):
+                    delta_bytes = file_size - last_progress
+                    if delta_bytes > 0:
+                        bytes_encoded.value += delta_bytes
+                        if chunk_progress is not None and chunk_key is not None:
+                            # per-chunk live byte progress
+                            chunk_progress[chunk_key].value += delta_bytes
+                        last_progress = file_size
+
                     if event_queue is not None:
-                        # Send ABSOLUTE current value; manager computes delta
                         event_queue.put({
                             "op": "update",
                             "bar_id": f"file_slot_{slot_idx:02}",
-                            "current": current_progress
+                            "current": file_size
                         })
-                last_progress = current_progress
+                        event_queue.put({
+                            "op": "finish",
+                            "bar_id": f"file_slot_{slot_idx:02}"
+                        })
 
-        if line.startswith('progress=end'): 
-            delta_bytes = file_size - last_progress
-            if delta_bytes > 0:
-                bytes_encoded.value += delta_bytes
-                if chunk_progress is not None and chunk_key is not None:
-                    # per-chunk live byte progress
-                    chunk_progress[chunk_key].value += delta_bytes
-                last_progress = file_size
-                if event_queue is not None:
-                    event_queue.put({
-                        "op": "update",
-                        "bar_id": f"file_slot_{slot_idx:02}",
-                        "current": file_size
-                    })
-            if event_queue is not None:
-                event_queue.put({"op": "finish", "bar_id": f"file_slot_{slot_idx:02}"})
+    def stderr_reader(proc):
+        nonlocal error_while_decoding
+        for line in proc.stderr:
+            line = line.rstrip("\n")
 
-    stdout, stderr = process.communicate()
+            with lock:
+                stderr_output.append(line)
+                if "error while decoding" in line.lower():
+                    error_while_decoding = True
 
-    if process.returncode != 0 or not os.path.exists(tmp_processing_file):
+    # 2) start reader threads
+    t_out = threading.Thread(target=stdout_reader, args=(process,))
+    t_err = threading.Thread(target=stderr_reader, args=(process,))
+
+    t_out.start()
+    t_err.start()
+
+    # 3) wait for ffmpeg to finish
+    process.wait()
+
+    # 4) ensure readers are done
+    t_out.join()
+    t_err.join()
+
+    # remove from registry
+    if process_registry is not None:
+        process_registry.pop(os.getpid(), None)
+
+    # 5) check result
+    failed = (
+        process.returncode != 0
+        or not os.path.exists(tmp_processing_file)
+        or error_while_decoding
+    )
+
+    if failed:
         if pause_event is None or not pause_event.is_set():
             log(f"{'=' * 29}  START  {'=' * 29}", level="error", log_to=["file"])
             log(f"FFmpeg failed for {rel_path} [CRF {crf}]", level="error", log_to=["file"])
-            log(stdout, level="error", log_to=["file"])
+            log("\n".join(stdout_output), level="error", log_to=["file"])
             log("-" * 60, level="error", log_to=["file"])
-            log(stderr, level="error", log_to=["file"])
+            log("\n".join(stderr_output), level="error", log_to=["file"])
             log(f"{'=' * 30}  END  {'=' * 30}", level="error", log_to=["file"])
 
-            # Print partial stderr to console
-            stderr_lines = stderr.strip().splitlines()
-            snippet = stderr_lines[-10:]  # Show first 10 lines
-            log(f"\n{'=' * 29}  START  {'=' * 29}", log_to=["console"])
-            log(f"FFmpeg error for {rel_path} [CRF {crf}]", log_to=["console"])
-            log("-" * 60, log_to=["console"])
-            for line in snippet:
-                log(line, log_to=["console"])
-            if len(stderr_lines) > 10:
+            # print partial stderr to console
+            log(f"{'=' * 29}  START  {'=' * 29}", log_to=["console"])
+            log(f"FFmpeg error for {rel_path} [CRF {crf}]: error log under:", log_to=["console"])
+            for line in stderr_output[-10:]:
+                log(f"          {line}", log_to=["console"])
+            if len(stderr_output) > 10:
                 log("... (truncated)", log_to=["console"])
-            log(f"{'=' * 30}  END  {'=' * 30}\n", log_to=["console"])
+            log(f"{'=' * 30}  END  {'=' * 30}", log_to=["console"])
             
-            if process_registry is not None:
-                process_registry.pop(os.getpid(), None)
-
             # Close the UI bar if it exists
             if event_queue is not None:
                 event_queue.put({"op": "finish", "bar_id": f"file_slot_{slot_idx:02}"})
@@ -162,8 +207,5 @@ def encode_file(
             return [src_file, crf, "failed-paused", f"Main thread for {rel_path} is paused"]
 
     elapsed = time.time() - start_time
-
-    if process_registry is not None:
-        process_registry.pop(os.getpid(), None)
     
     return [src_file, crf, "success", f"{os.path.basename(src_file)} in {format_elapsed(elapsed)}"]
