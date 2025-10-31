@@ -24,6 +24,7 @@ log_process = None
 class LogMessage:
     level: str
     message: str
+    log_to: list
 
 # --- Logging Filter ---
 class ErrorWarningFilter(logging.Filter):
@@ -86,12 +87,12 @@ def redirect_logs_to_new_file():
 
 
 # --- Logging Function ---
-def log(msg, level="info"):
+def log(msg, level="info", log_to=["file", "console"]):
     """
     Thread-safe and process-safe log entry via queue.
     """
     try:
-        LOG_QUEUE.put_nowait(LogMessage(level=level.lower(), message=msg))
+        LOG_QUEUE.put_nowait(LogMessage(level=level.lower(), message=msg, log_to=log_to))
     except Exception:
         pass  # avoid crashing in case of failure
 
@@ -143,13 +144,13 @@ def _emit_log(record: LogMessage, event_queue, tqdm_manager, lock, debug):
         configured_level = logging.DEBUG if debug else logging.INFO
 
         # Console output via tqdm if appropriate
-        if log_level_num >= configured_level:
+        if "console" in record.log_to and log_level_num >= configured_level:
             clear_code = "\033[J"
             event_queue.put({
                         "op": "print_statement",
                         "message": f"[{record.level.upper()}] {record.message}{clear_code}"})
 
-        if logging.getLogger().handlers:
+        if "file" in record.log_to and logging.getLogger().handlers:
             # Emit via logger
             logger_fn = {
                 'debug': logging.debug,
