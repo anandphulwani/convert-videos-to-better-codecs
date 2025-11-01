@@ -359,8 +359,7 @@ class TqdmManager:
             delta = current - last
             bar_entry.last_value = current
 
-            if delta > 0:
-                bar.update(delta)
+            bar.update(delta)
 
             postfix = ""
             if show_eta and bar.total and current > 0:

@@ -185,6 +185,8 @@ def encode_file(
         if not error_type_for_retry:
             # clean up / close UI bar if needed, then retry once
             if event_queue is not None:
+                if chunk_progress is not None and chunk_key is not None:
+                    chunk_progress[chunk_key].value -= last_progress
                 event_queue.put({"op": "finish", "bar_id": f"file_slot_{slot_idx:02}"})
 
             error_type_for_retry = None
