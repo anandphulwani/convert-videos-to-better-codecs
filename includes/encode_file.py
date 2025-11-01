@@ -23,7 +23,8 @@ def encode_file(
     process_registry=None,
     chunk_progress=None,
     chunk_key=None,
-    pause_event=None
+    pause_event=None,
+    error_type_for_retry=None
 ):
     tmp_processing_dir = TMP_PROCESSING.format(crf)
     tmp_output_dir = TMP_OUTPUT_ROOT.format(crf)
@@ -39,7 +40,7 @@ def encode_file(
         return [src_file, crf, "skipped-alreadyexists-tmp", f"{rel_path} (already exists in the temp output): {tmp_output_file}"]
 
     # os.makedirs(os.path.dirname(out_file), exist_ok=True)
-    cmd = ffmpeg_av1_crf_cmd_generator(src_file, tmp_processing_file, crf)
+    cmd = ffmpeg_av1_crf_cmd_generator(src_file, tmp_processing_file, crf, error_type_for_retry)
     duration = ffmpeg_get_duration(src_file)
 
     if duration is None:
@@ -181,6 +182,27 @@ def encode_file(
     )
 
     if failed:
+        if not error_type_for_retry:
+            # clean up / close UI bar if needed, then retry once
+            if event_queue is not None:
+                event_queue.put({"op": "finish", "bar_id": f"file_slot_{slot_idx:02}"})
+
+            error_type_for_retry = None
+            for line in stderr_output[-10:]:            
+                if "Assertion `cpi->twopass_frame.stats_in > twopass->stats_buf_ctx->stats_in_start' failed.".lower() in line.lower():
+                    error_type_for_retry = "twopass_stats_buf_ctx_error"
+                    break
+
+            if error_type_for_retry is not None:
+                return encode_file(
+                    src_file, rel_path, crf, slot_idx,
+                    bytes_encoded, event_queue,
+                    process_registry=process_registry,
+                    chunk_progress=chunk_progress,
+                    chunk_key=chunk_key,
+                    pause_event=pause_event,
+                    error_type_for_retry=error_type_for_retry
+                )
         if pause_event is None or not pause_event.is_set():
             log(f"{'=' * 29}  START  {'=' * 29}", level="error", log_to=["file"])
             log(f"FFmpeg failed for {rel_path} [CRF {crf}]", level="error", log_to=["file"])

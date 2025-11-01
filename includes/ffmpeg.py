@@ -17,7 +17,7 @@ def ffmpeg_get_duration(file_path):
         return None
 
 
-def ffmpeg_av1_crf_cmd_generator(src, out, crf):
+def ffmpeg_av1_crf_cmd_generator(src, out, crf, error_type_for_retry=None):
     # use -nostats to suppress the carriage-return stats,
     # and -progress pipe:1 to print newline-terminated progress to stdout
     cmd = [
@@ -34,5 +34,10 @@ def ffmpeg_av1_crf_cmd_generator(src, out, crf):
         '-progress', 'pipe:1',
         out
     ]
+
+    if error_type_for_retry == "twopass_stats_buf_ctx_error":
+        idx = cmd.index('-nostats') + 1
+        cmd[idx:idx] = ['-lag-in-frames', '0']
+
     log(f"FFmpeg command: {' '.join(cmd)}", level="debug")
     return cmd
