@@ -5,6 +5,7 @@ import subprocess
 import threading
 import time
 import math
+# import psutil
 
 from includes.ffmpeg import ffmpeg_get_duration, ffmpeg_av1_crf_cmd_generator
 from helpers.format_elapsed import format_elapsed
@@ -82,6 +83,21 @@ def encode_file(
             text=True,
             bufsize=1
         )
+
+    #
+    # Pin process to each core (disabled)
+    # Results:
+    # 76m 55s for per process pinned to core (on 6 core to process 30.4 MB data)
+    # 57m 04s for adhoc system/non pinned (on 6 core to process 30.4 MB data)
+    # (also factoring individual items only while all processes are busy, )
+    # (and ignoring when slots are empty, results are similar)
+    # 
+    # Commented Code:
+    # psutil.Process(process.pid).cpu_affinity([slot_idx - 1])  # set after start
+    # try:
+    #     psutil.Process(process.pid).nice(5)
+    # except Exception:
+    #     pass
 
     if process_registry is not None:
         log(f"Adding to process_registry: {process.pid}", level="debug")
