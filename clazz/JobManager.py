@@ -27,6 +27,7 @@ from includes.remove_empty_dirs_in_path import remove_empty_dirs_in_path
 from includes.remote_transfer_locks import try_acquire_remote_transfer_lock_loop, renew_remote_transfer_lock
 from includes.cleanup_working_folders import clear_tmp_processing
 from includes.cpu_watchdog import cpu_watchdog
+from includes.online_all_system_cores import online_all_system_cores
 from includes.state import pause_flag
 from helpers.logging_utils import log
 
@@ -75,9 +76,15 @@ class JobManager:
         self._preload_existing_input_chunks()
         self._start_workers()
         self._start_preloader()
+        self._start_online_all_system_cores()
         self._start_cpu_watchdog() if args.throttle else None
         self._start_pause_monitor() if args.throttle else None
         # Small head-start for the preloader is fine but not required.
+
+    def _start_online_all_system_cores(self):
+        t = threading.Thread(target=online_all_system_cores, name="_start_online_all_system_cores", args=(self.stop_event,), daemon=True)
+        t.start()
+        self.light_threads.append(t)
 
     def _start_cpu_watchdog(self):
         t = threading.Thread(target=cpu_watchdog, name="_start_cpu_watchdog", args=(self.stop_event,), daemon=True)
@@ -456,7 +463,7 @@ class JobManager:
     def _join_light_threads(self, is_pause=False):
         for t in self.light_threads:
             if is_pause:
-                if t.name == "_start_pause_monitor" or t.name == "_start_cpu_watchdog":
+                if t.name == "_start_pause_monitor" or t.name == "_start_cpu_watchdog" or t.name == "_start_online_all_system_cores":
                     continue
                 elif t.name == "_start_preloader":
                     continue
