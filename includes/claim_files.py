@@ -11,16 +11,10 @@ def claim_files(event_queue):
         return []
     
     chunk_dir = get_next_chunk_dir(TMP_INPUT)
-    # os.makedirs(chunk_dir, exist_ok=True)
-
     claimed = []
-
-    # print(f"\n{'=' * 29}  START  {'=' * 29}")
-    # print(f"Claiming another set of files ...")
     for src, rel in chunk:
         dst = os.path.join(IN_PROGRESS, rel)
         log(f"Added file to claiming: {rel}", level="debug")
         claimed.append((src, dst, os.path.join(chunk_dir, rel)))
 
-    # print(f"{'=' * 30}  END  {'=' * 30}\n")
     return claimed
