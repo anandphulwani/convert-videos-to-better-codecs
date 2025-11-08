@@ -15,6 +15,7 @@ from config import (
     MAX_WORKERS, CHUNK_SIZE, LOCKS_DIR
 )
 from helpers.format_elapsed import format_elapsed
+from helpers.format_size import format_size
 from helpers.get_topmost_dir import get_topmost_dir
 from helpers.remove_topmost_dir import remove_topmost_dir
 from helpers.logging_utils import log, setup_logging
@@ -73,6 +74,7 @@ class JobManager:
         self.chunk_progress = self.manager.dict()   # {chunk_name: Value('q')}
 
         self.start_time = time.time()
+        self.total_size_processed = Value('q', 0) 
 
     def start(self):
         # Queue any pre-existing inputs first so workers won’t starve on startup.
@@ -258,9 +260,17 @@ class JobManager:
             self._process_result_status(status, paths, event_queue)
             self._maybe_cleanup_and_finalize(task, paths, event_queue)
 
+        elapsed = time.time() - self.start_time
         if status != "failed-paused":
-            elapsed = time.time() - self.start_time
             log(f"[CRF {crf}] {status.upper()}: {result[3]} (Time since start: {format_elapsed(elapsed)})")
+
+        if status == "success":
+            with self.total_size_processed.get_lock():
+                self.total_size_processed.value += result[4]
+            total_size_processed = self.total_size_processed.value
+            log(f"Total size processed: {format_size(total_size_processed)}, "
+                f"time elapsed: {format_elapsed(elapsed)}, "
+                f"average: {(total_size_processed / (1024 * 1024) / (elapsed / 60)):.2f} MB/min")
 
     def _construct_paths(self, task):
         rel = task.rel_path

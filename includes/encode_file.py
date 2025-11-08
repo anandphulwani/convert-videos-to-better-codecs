@@ -33,12 +33,13 @@ def encode_file(
     tmp_processing_file = os.path.join(tmp_processing_dir, rel_path)
     tmp_output_file = os.path.join(tmp_output_dir, rel_path)
     final_output_file = os.path.join(final_output_dir, remove_topmost_dir(rel_path))
+    file_size = os.path.getsize(src_file)
 
     if os.path.exists(final_output_file):
-        return [src_file, crf, "skipped-alreadyexists-main", f"{rel_path} (already exists in the main output): {final_output_file}"]
+        return [src_file, crf, "skipped-alreadyexists-main", f"{rel_path} (already exists in the main output): {final_output_file}", file_size]
 
     if os.path.exists(tmp_output_file):
-        return [src_file, crf, "skipped-alreadyexists-tmp", f"{rel_path} (already exists in the temp output): {tmp_output_file}"]
+        return [src_file, crf, "skipped-alreadyexists-tmp", f"{rel_path} (already exists in the temp output): {tmp_output_file}", file_size]
 
     # os.makedirs(os.path.dirname(out_file), exist_ok=True)
     cmd = ffmpeg_av1_crf_cmd_generator(src_file, tmp_processing_file, crf, error_type_for_retry)
@@ -46,9 +47,8 @@ def encode_file(
 
     if duration is None:
         log(f"Duration not found for {rel_path}, skipping file.", level="warning")
-        return [src_file, crf, "skipped-notsupported", f"{rel_path} (duration not found)"]
-
-    file_size = os.path.getsize(src_file)
+        return [src_file, crf, "skipped-notsupported", f"{rel_path} (duration not found)", file_size]
+  
     start_time = time.time()
 
     log(f"Encoding {rel_path} [CRF {crf}]", level="debug")
@@ -242,10 +242,10 @@ def encode_file(
             if event_queue is not None:
                 event_queue.put({"op": "finish", "bar_id": f"file_slot_{slot_idx:02}"})
 
-            return [src_file, crf, "failed", f"FFmpeg failed for {rel_path} (see log)"]
+            return [src_file, crf, "failed", f"FFmpeg failed for {rel_path} (see log)", file_size]
         else:
-            return [src_file, crf, "failed-paused", f"Main thread for {rel_path} is paused"]
+            return [src_file, crf, "failed-paused", f"Main thread for {rel_path} is paused", file_size]
 
     elapsed = time.time() - start_time
     
-    return [src_file, crf, "success", f"{os.path.basename(src_file)} in {format_elapsed(elapsed)}"]
+    return [src_file, crf, "success", f"{os.path.basename(src_file)} in {format_elapsed(elapsed)}", file_size]
