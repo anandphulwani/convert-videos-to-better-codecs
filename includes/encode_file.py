@@ -105,12 +105,13 @@ def encode_file(
 
     last_progress = 0
     error_while_decoding = False
+    is_high_priority = False
     stdout_output = []
     stderr_output = []
     lock = threading.Lock()  # to protect shared vars above
 
     def stdout_reader(proc):
-        nonlocal last_progress
+        nonlocal last_progress, is_high_priority
         for line in proc.stdout:
             line = line.strip()
 
@@ -128,6 +129,13 @@ def encode_file(
                     percent = out_ms / duration
                     current_progress = math.floor(file_size * percent)
 
+                    if not is_high_priority and math.floor(percent * 100) >= 85:
+                        log(f"Shifting the Slot {slot_idx:02} to high priority.", level="debug")
+                        try:
+                            os.sched_setscheduler(process.pid, os.SCHED_RR, os.sched_param(15))
+                        except PermissionError:
+                            print("Need CAP_SYS_NICE/root to set RT scheduling.")
+                        is_high_priority = True
 
                     delta_bytes = current_progress - last_progress
                     if delta_bytes > 0:
