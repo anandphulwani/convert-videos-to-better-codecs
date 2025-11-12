@@ -7,6 +7,7 @@ import time
 import math
 # import psutil
 
+from helpers.format_size import format_size
 from includes.ffmpeg import ffmpeg_get_duration, ffmpeg_av1_crf_cmd_generator
 from helpers.format_elapsed import format_elapsed
 from helpers.remove_topmost_dir import remove_topmost_dir
@@ -256,4 +257,4 @@ def encode_file(
 
     elapsed = time.time() - start_time
     
-    return [src_file, crf, "success", f"{os.path.basename(src_file)} in {format_elapsed(elapsed)}", file_size]
+    return [src_file, crf, "success", f"{os.path.basename(src_file)} ({format_size(file_size)}) in {format_elapsed(elapsed)}", file_size]
