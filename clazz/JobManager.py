@@ -78,8 +78,8 @@ class JobManager:
 
     def start(self):
         # Queue any pre-existing inputs first so workers won’t starve on startup.
-        self._preload_existing_input_chunks()
         self._start_workers()
+        self._preload_existing_input_chunks()
         self._start_preloader()
         self._start_online_all_system_cores()
         self._start_cpu_watchdog() if args.throttle else None
